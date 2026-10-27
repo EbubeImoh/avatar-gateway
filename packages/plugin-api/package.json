@@ -1,6 +1,6 @@
 {
   "name": "@avatar-gateway/plugin-api",
-  "version": "0.0.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Plugin API for community UI (React/web components) and agent-behaviour plugins, with manifests and per-plugin permissions.",
   "license": "Apache-2.0",

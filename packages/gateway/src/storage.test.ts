@@ -1,0 +1,118 @@
+import { describe, expect, it, beforeEach } from "vitest";
+import { GatewayStorage } from "./storage.js";
+
+describe("GatewayStorage (SQLite in-memory)", () => {
+  let storage: GatewayStorage;
+
+  beforeEach(() => {
+    storage = new GatewayStorage(":memory:");
+  });
+
+  it("registers and retrieves a site", () => {
+    storage.registerSite({
+      siteDid: "did:key:zSiteA",
+      origin: "https://site-a.example",
+      displayName: "Site A",
+      publicKeyPem: "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----",
+      backendUrl: "https://site-a.example",
+      contact: "admin@site-a.example",
+      mtlsCertFingerprint: "sha256:abc123",
+      acceptingVisitors: true,
+      offeredScopes: ["chat:send", "chat:receive"],
+      publicPaths: ["/", "/about"],
+      createdAt: new Date().toISOString(),
+    });
+    const site = storage.getSite("did:key:zSiteA");
+    expect(site).toBeDefined();
+    expect(site?.origin).toBe("https://site-a.example");
+    expect(site?.offeredScopes).toEqual(["chat:send", "chat:receive"]);
+    expect(storage.getSiteByOrigin("https://site-a.example")?.siteDid).toBe("did:key:zSiteA");
+    expect(storage.getSiteByMtlsFingerprint("sha256:abc123")?.siteDid).toBe("did:key:zSiteA");
+  });
+
+  it("registers and retrieves an avatar", () => {
+    storage.registerSite({ siteDid: "did:key:zSite", origin: "https://site.example", displayName: "Site", publicKeyPem: "pk", backendUrl: "https://site.example", contact: "", mtlsCertFingerprint: "", acceptingVisitors: true, offeredScopes: ["chat:send"], publicPaths: ["/"], createdAt: new Date().toISOString() });
+    storage.registerAvatar({ avatarDid: "did:key:zAvatar", siteDid: "did:key:zSite", name: "Bot", publicKeyPem: "pk", publicBio: "A bot", look: { style: "brick-minifig" }, travelEnabled: true, maxVisitsPerDay: 5, createdAt: new Date().toISOString() });
+    const avatar = storage.getAvatar("did:key:zAvatar");
+    expect(avatar?.name).toBe("Bot");
+    expect(storage.listAvatarsForSite("did:key:zSite")).toHaveLength(1);
+  });
+
+  it("creates and updates a visit", () => {
+    storage.createVisit({ visitId: "vst_001", visitorAvatarDid: "did:key:zA", homeSiteDid: "did:key:zH", hostSiteDid: "did:key:zB", grantedScopes: ["chat:send"], status: "pending", createdAt: new Date().toISOString() });
+    expect(storage.getVisit("vst_001")?.status).toBe("pending");
+    storage.updateVisitStatus("vst_001", "active");
+    expect(storage.getVisit("vst_001")?.status).toBe("active");
+    storage.updateVisitStatus("vst_001", "ended", "visitor_left", new Date().toISOString());
+    expect(storage.getVisit("vst_001")?.status).toBe("ended");
+  });
+
+  it("consumes JTIs and prevents replay", () => {
+    const now = Math.floor(Date.now() / 1000);
+    expect(storage.consumeJti("jti-123", now + 300, now)).toBe(true);
+    expect(storage.consumeJti("jti-123", now + 300, now)).toBe(false);
+    expect(storage.consumeJti("jti-456", now + 300, now)).toBe(true);
+  });
+
+  it("records revocations and checks them", () => {
+    storage.addRevocation({ revocationId: "rev_1", targetType: "avatar", targetId: "did:key:zBad", reason: "abuse", effectiveAt: new Date().toISOString() });
+    expect(storage.isRevoked("did:key:zBad")).toBe(true);
+    expect(storage.isRevoked("did:key:zGood")).toBe(false);
+    expect(storage.listRevocations()).toHaveLength(1);
+  });
+
+  it("appends audit events with hash chaining", () => {
+    const e1 = storage.appendAudit("site.registered", "did:key:zA", { origin: "https://a.example" });
+    const e2 = storage.appendAudit("visit.requested", "did:key:zB", { visit_id: "vst_1" }, "vst_1");
+    expect(e1.prevHash).toBe("0000000000000000000000000000000000000000000000000000000000000000");
+    expect(e2.prevHash).toBe(e1.hash);
+    expect(e2.hash).not.toBe(e1.hash);
+    const events = storage.listAudit();
+    expect(events.length).toBe(2);
+    expect(storage.getChainHead()).toBe(e2.hash);
+  });
+
+  it("manages social profiles", () => {
+    storage.upsertProfile({ avatarDid: "did:key:zA", handle: "bot-a@site.example", name: "Bot A", publicBio: "Hello", homeOrigin: "https://site.example", followPolicy: "open", dmPolicy: "request", updatedAt: new Date().toISOString() });
+    expect(storage.getProfile("did:key:zA")?.name).toBe("Bot A");
+    expect(storage.getProfileByHandle("bot-a@site.example")?.avatarDid).toBe("did:key:zA");
+  });
+
+  it("manages posts and timelines", () => {
+    storage.createPost({ postId: "pst_1", author: "did:key:zA", text: "Hello world!", createdAt: new Date().toISOString(), signature: "" });
+    storage.createPost({ postId: "pst_2", author: "did:key:zA", text: "Second post", createdAt: new Date().toISOString(), signature: "" });
+    const timeline = storage.listTimeline("did:key:zA");
+    expect(timeline).toHaveLength(2);
+    expect(storage.deletePost("pst_1", "did:key:zA")).toBe(true);
+    expect(storage.listTimeline("did:key:zA")).toHaveLength(1);
+  });
+
+  it("manages follows and follow graph", () => {
+    storage.createFollow({ followId: "fol_1", follower: "did:key:zA", followee: "did:key:zB", status: "active", createdAt: new Date().toISOString() });
+    storage.createFollow({ followId: "fol_2", follower: "did:key:zC", followee: "did:key:zB", status: "active", createdAt: new Date().toISOString() });
+    expect(storage.getFollowers("did:key:zB")).toEqual(expect.arrayContaining(["did:key:zA", "did:key:zC"]));
+    expect(storage.getFollowing("did:key:zA")).toEqual(["did:key:zB"]);
+    storage.updateFollowStatus("fol_1", "rejected");
+    expect(storage.getFollowers("did:key:zB")).toEqual(["did:key:zC"]);
+  });
+
+  it("manages DM threads and messages", () => {
+    const thread = storage.findOrCreateDmThread("did:key:zA", "did:key:zB");
+    expect(thread.threadId).toMatch(/^dmt_/);
+    // Same participants return same thread
+    const thread2 = storage.findOrCreateDmThread("did:key:zB", "did:key:zA");
+    expect(thread2.threadId).toBe(thread.threadId);
+
+    storage.addDmMessage({ messageId: "dmm_1", threadId: thread.threadId, from: "did:key:zA", text: "Hi!", seq: 1, createdAt: new Date().toISOString(), signature: "" });
+    const msgs = storage.getDmMessages(thread.threadId);
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].text).toBe("Hi!");
+  });
+
+  it("records and queries the activity feed", () => {
+    storage.addActivity({ activityId: "act_1", actorDid: "did:key:zA", type: "post.created", refId: "pst_1", summary: "Posted something", visibility: "public", createdAt: new Date().toISOString() });
+    storage.addActivity({ activityId: "act_2", actorDid: "did:key:zB", type: "agent.joined", refId: "did:key:zB", summary: "Bot B joined", visibility: "public", createdAt: new Date().toISOString() });
+    const feed = storage.getActivityFeed();
+    expect(feed.length).toBe(2);
+  });
+});

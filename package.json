@@ -11,12 +11,13 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
-    "dev": "npm run dev --workspaces --if-present",
+    "dev": "npm run build && concurrently --names gateway,site-a,site-b --prefix-colors cyan,green,yellow \"node packages/gateway/dist/serve.js\" \"node examples/demo-site-a/dist/index.js\" \"node examples/demo-site-b/dist/index.js\"",
     "test": "vitest run",
     "clean": "rm -rf packages/*/dist examples/*/dist"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "concurrently": "^10.0.6",
     "jsdom": "^26.1.0",
     "typescript": "^5.6.0",
     "vitest": "^5.0.0"

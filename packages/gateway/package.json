@@ -1,13 +1,25 @@
 {
   "name": "@avatar-gateway/gateway",
-  "version": "0.0.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "Secure broker: identity, mTLS, visit tokens, policy, relay, audit.",
+  "description": "Secure broker: identity, mTLS, visit tokens, policy, relay, audit, HTTP/WSS server.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc -p tsconfig.json"
+    "build": "tsc -p tsconfig.json",
+    "dev": "node dist/serve.js",
+    "start": "node dist/serve.js"
+  },
+  "dependencies": {
+    "@fastify/websocket": "^11.3.4",
+    "better-sqlite3": "^13.0.3",
+    "fastify": "^5.12.7",
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/ws": "^8.18.2"
   }
 }
