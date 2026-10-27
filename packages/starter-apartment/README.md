@@ -70,6 +70,17 @@ The component calls the returned widget's `destroy()` method when it unmounts.
 
 Serve the page from a development or static server that exposes `node_modules`; the module imports above use those paths for a no-bundler example. Adding `gateway: { selector, backendUrl }` mounts the SDK widget into the selected element and tears it down with `destroy()`.
 
+`mount()` also takes an optional activity source, such as a `@shubur/life` simulation, and display options:
+
+```js
+const apartment = mount("#my-apartment", { dayCycle: { timezone: "UTC" } }, lifeSimulation, {
+  followAvatar: true, // show the avatar's room until the visitor picks one
+  refreshMs: 1000, // re-render interval, 250 ms to 1 hour (default one minute)
+  clock: () => new Date(), // inject a clock for previews or time-lapses
+  onRender: ({ activity, room, period }) => console.log(activity.caption, room, period),
+});
+```
+
 ## Customize
 
 ```ts

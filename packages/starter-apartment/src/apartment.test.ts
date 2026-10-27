@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { JSDOM } from "jsdom";
 import { mount } from "./index.js";
 import {
@@ -17,7 +17,8 @@ import {
   DEFAULT_DAY_CYCLE,
   DEFAULT_LAYOUT,
 } from "./types.js";
-import type { ApartmentConfig } from "./types.js";
+import type { ApartmentConfig, DayActivity } from "./types.js";
+import type { ApartmentRenderState } from "./index.js";
 
 // ── resolveConfig ──────────────────────────────────────────────────────────
 
@@ -199,6 +200,18 @@ describe("buildSceneSvg", () => {
     expect(() => buildSceneSvg(custom, new Date("2026-01-01T12:00:00Z"), "garage")).toThrow("not in the apartment layout");
   });
 
+  it("keeps the avatar's position transform off the animated group", () => {
+    // The stylesheet sets transform-origin on .ag-apartment__avatar for its bob animation; in SVG that
+    // also re-bases a transform attribute on the same element and pushed the sleeping avatar off-screen.
+    const sleeping = { startHour: 0, endHour: 24, activity: "sleeping" as const, caption: "Asleep", room: "bedroom" as const };
+    const { svg } = buildSceneSvg(resolveConfig({ dayCycle: { timezone: "UTC" } }), new Date("2026-01-01T02:00:00Z"), "bedroom", sleeping);
+    const dom = new JSDOM(`<!doctype html><body>${svg}</body>`);
+    const animated = dom.window.document.querySelector(".ag-apartment__avatar")!;
+    expect(animated.hasAttribute("transform")).toBe(false);
+    expect(animated.parentElement?.getAttribute("transform")).toContain("rotate(-78 80 104)");
+    dom.window.close();
+  });
+
   it("includes night overlay at night", () => {
     const nightTime = new Date("2026-01-01T02:00:00Z"); // 2 AM UTC
     const { svg } = buildSceneSvg(cfg, nightTime);
@@ -271,6 +284,119 @@ describe("defaults", () => {
       getDayActivities: () => [{ startHour: 0, endHour: 23, activity: "working" as const, caption: "Incomplete day", room: "studio" as const }],
     };
     expect(() => mount(host, {}, source)).toThrow("cover the entire 24-hour day");
+    dom.window.close();
+  });
+});
+
+// ── mount options ──────────────────────────────────────────────────────────
+
+describe("mount options", () => {
+  afterEach(() => { vi.useRealTimers(); });
+
+  const routine: DayActivity[] = [
+    { startHour: 0, endHour: 7, activity: "sleeping", caption: "Sound asleep", room: "bedroom" },
+    { startHour: 7, endHour: 9, activity: "coffee", caption: "Making a cup of coffee", room: "kitchen" },
+    { startHour: 9, endHour: 24, activity: "working", caption: "A focused work session", room: "studio" },
+  ];
+  const setup = () => {
+    const dom = new JSDOM("<!doctype html><html><head></head><body><div id=home></div></body></html>");
+    return { dom, host: dom.window.document.querySelector<HTMLElement>("#home")! };
+  };
+
+  it("renders from an injected clock and refresh interval instead of the system clock", () => {
+    vi.useFakeTimers();
+    const { dom, host } = setup();
+    let now = new Date("2026-03-02T03:00:00Z");
+    const renders: ApartmentRenderState[] = [];
+    const apartment = mount(host, { dayCycle: { timezone: "UTC", activities: routine } }, undefined, {
+      clock: () => now,
+      refreshMs: 1_000,
+      followAvatar: true,
+      onRender: (state) => renders.push(state),
+    });
+    expect(renders.at(-1)).toMatchObject({ room: "bedroom", activityRoom: "bedroom", period: "night" });
+    expect(renders.at(-1)?.activity.activity).toBe("sleeping");
+    expect(host.querySelector(".ag-apartment__time")?.getAttribute("datetime")).toBe("2026-03-02T03:00:00.000Z");
+
+    now = new Date("2026-03-02T07:30:00Z");
+    vi.advanceTimersByTime(999);
+    expect(renders).toHaveLength(1);
+    vi.advanceTimersByTime(1);
+    expect(renders).toHaveLength(2);
+    expect(renders.at(-1)).toMatchObject({ room: "kitchen", activityRoom: "kitchen", period: "morning" });
+    expect(host.querySelector(".ag-apartment")?.getAttribute("data-room")).toBe("kitchen");
+    expect(host.querySelector(".ag-apartment__stage svg")?.getAttribute("aria-label")).toContain("Kitchen");
+
+    apartment.destroy();
+    vi.advanceTimersByTime(5_000);
+    expect(renders).toHaveLength(2);
+    dom.window.close();
+  });
+
+  it("follows the avatar between rooms until a visitor picks a room", () => {
+    vi.useFakeTimers();
+    const { dom, host } = setup();
+    let now = new Date("2026-03-02T08:00:00Z");
+    const apartment = mount(host, { dayCycle: { timezone: "UTC", activities: routine } }, undefined, { clock: () => now, refreshMs: 1_000, followAvatar: true });
+    const pressed = () => host.querySelector('.ag-apartment__room[aria-pressed="true"]')?.textContent;
+    expect(pressed()).toBe("Kitchen");
+
+    now = new Date("2026-03-02T10:00:00Z");
+    vi.advanceTimersByTime(1_000);
+    expect(pressed()).toBe("Studio");
+
+    const gym = [...host.querySelectorAll<HTMLButtonElement>(".ag-apartment__room")].find((button) => button.textContent === "Gym")!;
+    gym.click();
+    now = new Date("2026-03-02T23:00:00Z");
+    vi.advanceTimersByTime(1_000);
+    expect(pressed()).toBe("Gym");
+    expect(host.querySelector(".ag-apartment__caption span")?.textContent).toBe("A quiet gym");
+    apartment.destroy();
+    dom.window.close();
+  });
+
+  it("keeps the default studio view when not following the avatar", () => {
+    const { dom, host } = setup();
+    const apartment = mount(host, { dayCycle: { timezone: "UTC", activities: routine } }, undefined, { clock: () => new Date("2026-03-02T03:00:00Z") });
+    expect(host.querySelector(".ag-apartment")?.getAttribute("data-room")).toBe("studio");
+    expect(host.querySelector(".ag-apartment__caption span")?.textContent).toBe("A quiet studio");
+    apartment.destroy();
+    dom.window.close();
+  });
+
+  it("only replaces the scene artwork when the scene changes", () => {
+    vi.useFakeTimers();
+    const { dom, host } = setup();
+    let now = new Date("2026-03-02T10:00:00Z");
+    const apartment = mount(host, { dayCycle: { timezone: "UTC", activities: routine } }, undefined, { clock: () => now, refreshMs: 1_000, followAvatar: true });
+    const first = host.querySelector(".ag-apartment__stage svg");
+    now = new Date("2026-03-02T10:20:00Z");
+    vi.advanceTimersByTime(1_000);
+    expect(host.querySelector(".ag-apartment__stage svg")).toBe(first);
+    expect(host.querySelector(".ag-apartment__time")?.getAttribute("datetime")).toBe("2026-03-02T10:20:00.000Z");
+    now = new Date("2026-03-02T20:00:00Z");
+    vi.advanceTimersByTime(1_000);
+    expect(host.querySelector(".ag-apartment__stage svg")).not.toBe(first);
+    apartment.destroy();
+    dom.window.close();
+  });
+
+  it("marks the current local time on the day bar", () => {
+    const { dom, host } = setup();
+    const apartment = mount(host, { dayCycle: { timezone: "Asia/Kolkata", activities: routine } }, undefined, { clock: () => new Date("2026-03-02T00:00:00Z") });
+    // 00:00 UTC is 05:30 in Kolkata: 330 of 1440 minutes.
+    expect((host.querySelector(".ag-apartment__now") as HTMLElement).style.left).toBe("22.917%");
+    expect(host.querySelectorAll(".ag-apartment__day span")).toHaveLength(3);
+    apartment.destroy();
+    dom.window.close();
+  });
+
+  it("rejects unsafe refresh intervals and non-function hooks", () => {
+    const { dom, host } = setup();
+    expect(() => mount(host, {}, undefined, { refreshMs: 10 })).toThrow("refreshMs");
+    expect(() => mount(host, {}, undefined, { refreshMs: Number.NaN })).toThrow("refreshMs");
+    expect(() => mount(host, {}, undefined, { clock: "now" as never })).toThrow("clock");
+    expect(() => mount(host, {}, undefined, { onRender: {} as never })).toThrow("onRender");
     dom.window.close();
   });
 });

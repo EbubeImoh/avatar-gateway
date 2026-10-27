@@ -84,6 +84,26 @@ describe("seeded life simulation", () => {
     expect(simulation.getSnapshot()).toEqual(snapshot);
   });
 
+  it("moves the avatar between home rooms when an apartment polls it on a fast time-lapse clock", () => {
+    const simulation = createLifeSimulation({ agentId: "agent-timelapse", seed: "shubur-site", startedAt: at(-24), timeZone: "UTC" });
+    const rooms = new Set<string>();
+    const activities = new Set<string>();
+    // A preview polls every few simulated minutes; whole-hour transitions must still apply exactly once.
+    for (let minutes = 0; minutes <= 24 * 60; minutes += 20) {
+      const now = new Date(start.getTime() + minutes * 60 * 1000);
+      const day = simulation.getDayActivities(now);
+      const hour = now.getUTCHours();
+      const current = day.find((activity) => hour >= activity.startHour && hour < activity.endHour)!;
+      expect(current).toBeDefined();
+      rooms.add(current.room!);
+      activities.add(current.activity);
+    }
+    expect(simulation.getSnapshot().simulatedHours).toBe(48);
+    expect(rooms.size).toBeGreaterThanOrEqual(3);
+    expect(rooms).toContain("bedroom");
+    expect(activities).toContain("sleeping");
+  });
+
   it("returns defensive snapshots and a local status that does not reveal the agent id", () => {
     const simulation = createLifeSimulation({ agentId: "private-local-id", seed: 23, startedAt: start });
     const snapshot = simulation.getSnapshot();

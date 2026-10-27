@@ -258,7 +258,8 @@ function buildAvatarSvg(cfg: ResolvedApartmentConfig, activity: AvatarActivity, 
   const transform = sleeping
     ? `translate(${x} ${y}) scale(.68) rotate(-78 80 104) translate(-24 4)`
     : `translate(${x} ${y}) scale(.68)`;
-  return `<g class="ag-apartment__avatar" transform="${transform}" role="img" aria-label="${esc(name)} is ${activity}">
+  // Position on an outer group: CSS transform-origin on the animated group would otherwise re-base this transform.
+  return `<g transform="${transform}"><g class="ag-apartment__avatar" role="img" aria-label="${esc(name)} is ${activity}">
     <rect x="51" y="15" width="58" height="55" rx="18" fill="${skinTone}" stroke="#25333a" stroke-width="5"/>
     <path d="M52 29q-2-24 28-26 28 1 30 24-20-12-58 2" fill="${hairColor}" stroke="#25333a" stroke-width="4"/>
     <circle cx="68" cy="45" r="3.5" fill="#25333a"/><circle cx="93" cy="45" r="3.5" fill="#25333a"/>
@@ -268,7 +269,7 @@ function buildAvatarSvg(cfg: ResolvedApartmentConfig, activity: AvatarActivity, 
     ${raised}
     <path d="M61 131v30q0 7 7 7h18v-37zm28 0v37h18q7 0 7-7v-30z" fill="${trouserColor}" stroke="#25333a" stroke-width="5"/>
     <path d="M62 166h23m6 0h22" stroke="#25333a" stroke-width="8" stroke-linecap="round"/>
-  </g>`;
+  </g></g>`;
 }
 
 function defaultFurniturePosition(kind: FurnitureKind): { x: number; y: number; scale: number } {
@@ -367,15 +368,17 @@ export const APARTMENT_STYLES = `
 .ag-apartment__room[aria-pressed=true]{background:#cfe477;box-shadow:2px 2px 0 #25333a}
 .ag-apartment__room:focus-visible{outline:3px solid #597b72;outline-offset:2px}
 .ag-apartment__stage{overflow:hidden;border:2px solid #25333a;border-radius:18px;background:#39464a;box-shadow:5px 5px 0 #25333a}
-.ag-apartment__stage svg{display:block;width:100%;height:auto}
+.ag-apartment__stage svg{display:block;width:100%;height:auto;animation:ag-enter .5s ease-out}
 .ag-apartment__avatar{transform-box:fill-box;transform-origin:center bottom;animation:ag-bob 2.8s ease-in-out infinite}
 .ag-apartment[data-activity=walking] .ag-apartment__avatar{animation-duration:.55s}
 .ag-apartment__caption{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:12px 2px 5px;font-size:13px;font-weight:650}
 .ag-apartment__time{color:#66726e;font-weight:500}
-.ag-apartment__day{display:flex;height:8px;overflow:hidden;border:1px solid #25333a;border-radius:999px;background:#e5e0d2}
+.ag-apartment__day{position:relative;display:flex;height:8px;overflow:hidden;border:1px solid #25333a;border-radius:999px;background:#e5e0d2}
 .ag-apartment__day span{height:100%;border-right:1px solid rgba(37,51,58,.35)}
+.ag-apartment__now{position:absolute;top:0;bottom:0;width:3px;margin-left:-1.5px;border-radius:2px;background:#25333a}
 @keyframes ag-bob{50%{translate:0 -3px}}
-@media(prefers-reduced-motion:reduce){.ag-apartment__avatar{animation:none}}
+@keyframes ag-enter{from{opacity:.35}}
+@media(prefers-reduced-motion:reduce){.ag-apartment__avatar,.ag-apartment__stage svg{animation:none}}
 `;
 
 export function activityCssClass(activity: AvatarActivity): string {
