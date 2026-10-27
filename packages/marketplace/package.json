@@ -1,7 +1,7 @@
 {
   "name": "@avatar-gateway/marketplace",
   "version": "0.2.0",
-  "description": "Pack format, registry client, and entitlement hooks for the avatar-gateway marketplace.",
+  "description": "Shubur Marketplace pack format, registry client, integrity checks, and entitlement hooks.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "dist/index.js",

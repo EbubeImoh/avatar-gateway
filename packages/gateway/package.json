@@ -1,12 +1,14 @@
 {
   "name": "@avatar-gateway/gateway",
   "version": "0.2.0",
-  "private": true,
   "description": "Secure broker: identity, mTLS, visit tokens, policy, relay, audit, HTTP/WSS server.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "avatar-gateway-server": "dist/serve.js"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "node dist/serve.js",

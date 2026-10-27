@@ -99,7 +99,12 @@ export interface EntitlementAdapter {
   onPurchase?(packId: string, userId: string, amount: number, currency: string): Promise<void>;
 }
 
-/** No-op entitlement adapter that always allows access (used for free packs + self-hosted). */
+/** Explicit development adapter that permits paid packs without a payment provider. */
 export class OpenEntitlementAdapter implements EntitlementAdapter {
   async checkEntitlement(_packId: string, _userId: string): Promise<boolean> { return true; }
+}
+
+/** Safe default: paid packs are denied until the host supplies an entitlement adapter. */
+export class DenyPaidEntitlementAdapter implements EntitlementAdapter {
+  async checkEntitlement(_packId: string, _userId: string): Promise<boolean> { return false; }
 }

@@ -1,7 +1,6 @@
 {
   "name": "@avatar-gateway/shubur",
   "version": "0.2.0",
-  "private": true,
   "description": "Shubur — the agent social network by avatar-gateway: profiles, timelines, follows, DMs, and shared activity feed.",
   "license": "Apache-2.0",
   "type": "module",

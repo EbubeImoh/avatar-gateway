@@ -1,15 +1,13 @@
 #!/usr/bin/env node
-/**
- * avatar-gateway MCP server entry point.
- * Supports stdio transport (default) and streamable-HTTP transport.
- *
- * Usage:
- *   stdio:  node dist/server.js
- *   HTTP:   node dist/server.js --http --port 4200
- */
+/** Shubur MCP server entry point with stdio and Streamable HTTP transports. */
 
+import { createServer as createHttpServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { timingSafeEqual, randomUUID } from "node:crypto";
+import { pathToFileURL } from "node:url";
+import { resolve } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 import {
   toolStatus,
@@ -21,252 +19,302 @@ import {
   toolPost,
   toolFollow,
   toolDmRequest,
+  toolAcceptDm,
+  toolReadDms,
+  toolSendDm,
   toolStartVisit,
   toolStopVisit,
   toolInstallPack,
   toolCustomiseApartment,
+  toolOwnerChat,
+  toolReadOwnerChannel,
 } from "./tools.js";
 
-const cwd = process.cwd();
+type ToolArguments<TShape extends z.ZodRawShape> = z.infer<z.ZodObject<TShape>>;
+type ToolResult = { content: Array<{ type: "text"; text: string }> };
 
-const server = new McpServer({
-  name: "avatar-gateway",
-  version: "0.2.0",
-});
-
-// ── status ─────────────────────────────────────────────────────────────────
-
-server.tool(
-  "avatar_gateway_status",
-  "Show the current avatar-gateway configuration and connection status for this project.",
-  {},
-  async () => ({ content: [{ type: "text", text: await toolStatus(cwd) }] }),
-);
-
-// ── init ───────────────────────────────────────────────────────────────────
-
-server.tool(
-  "avatar_gateway_init",
-  "Initialise avatar-gateway config for the current project. Choose self-hosted (default) or hosted (Shubur Cloud).",
-  {
-    mode: z.enum(["self_hosted", "hosted"]).optional().describe("self_hosted or hosted"),
-    gateway_url: z.string().url().optional().describe("Gateway base URL (defaults to http://localhost:4100 for self-hosted)"),
-    tenant_api_key: z.string().optional().describe("Tenant API key (hosted mode only)"),
-    avatar_name: z.string().optional().describe("Display name for the primary avatar"),
-    ai_provider: z.enum(["openai", "anthropic", "openai_compatible"]).optional().describe("AI provider type"),
-    ai_provider_env_var: z.string().optional().describe("Env var name that holds the API key (e.g. OPENAI_API_KEY)"),
-  },
-  async (args) => ({
-    content: [{
-      type: "text",
-      text: await toolInit({
-        mode: args.mode,
-        gatewayUrl: args.gateway_url,
-        tenantApiKey: args.tenant_api_key,
-        avatarName: args.avatar_name,
-        aiProvider: args.ai_provider,
-        aiProviderEnvVar: args.ai_provider_env_var,
-      }, cwd),
-    }],
-  }),
-);
-
-// ── create-identity ────────────────────────────────────────────────────────
-
-server.tool(
-  "avatar_gateway_create_identity",
-  "Generate an Ed25519 keypair and DID for the site. Stores keys locally in .avatar-gateway/config.json (private key never leaves the machine).",
-  {
-    site_name: z.string().optional(),
-    origin: z.string().url().optional().describe("Your site's public URL, e.g. https://myportfolio.com"),
-    backend_url: z.string().optional().describe("Path to the avatar-gateway backend, default /avatar-gateway"),
-  },
-  async (args) => ({
-    content: [{
-      type: "text",
-      text: await toolCreateIdentity({ siteName: args.site_name, origin: args.origin, backendUrl: args.backend_url }, cwd),
-    }],
-  }),
-);
-
-// ── connect-gateway ────────────────────────────────────────────────────────
-
-server.tool(
-  "avatar_gateway_connect_gateway",
-  "Register this site with the gateway. Creates the site record and returns the site DID.",
-  {
-    origin: z.string().url().describe("Your site's public origin URL"),
-    display_name: z.string().optional(),
-    contact: z.string().optional(),
-    offered_scopes: z.array(z.string()).optional().describe("Scopes you allow visiting avatars (defaults to chat + page:read-public)"),
-  },
-  async (args) => ({
-    content: [{
-      type: "text",
-      text: await toolConnectGateway({
-        origin: args.origin,
-        displayName: args.display_name,
-        contact: args.contact,
-        offeredScopes: args.offered_scopes,
-      }, cwd),
-    }],
-  }),
-);
-
-// ── register-avatar ────────────────────────────────────────────────────────
-
-server.tool(
-  "avatar_gateway_register_avatar",
-  "Register the primary avatar with the gateway. Generates an avatar DID and stores it in config.",
-  {
-    name: z.string().describe("Avatar display name"),
-    public_bio: z.string().optional(),
-    look: z.record(z.string(), z.unknown()).optional().describe("Avatar look object (style, colors, accessories)"),
-  },
-  async (args) => ({
-    content: [{
-      type: "text",
-      text: await toolRegisterAvatar({ name: args.name, publicBio: args.public_bio, look: args.look }, cwd),
-    }],
-  }),
-);
-
-// ── create-shubur-profile ──────────────────────────────────────────────────
-
-server.tool(
-  "avatar_gateway_create_shubur_profile",
-  "Create or update the Shubur (agent social network) profile for the registered avatar.",
-  {
-    public_bio: z.string().optional().describe("Short public bio (shown on Shubur, public knowledge only)"),
-    follow_policy: z.enum(["open", "approve", "closed"]).optional(),
-    dm_policy: z.enum(["followers", "mutuals", "request", "closed"]).optional(),
-  },
-  async (args) => ({
-    content: [{
-      type: "text",
-      text: await toolCreateShuburProfile({ publicBio: args.public_bio, followPolicy: args.follow_policy, dmPolicy: args.dm_policy }, cwd),
-    }],
-  }),
-);
-
-// ── post ───────────────────────────────────────────────────────────────────
-
-server.tool(
-  "avatar_gateway_post",
-  "Post a message to the avatar's Shubur timeline (max 1000 chars, text only).",
-  {
-    text: z.string().max(1000).describe("Post text"),
-  },
-  async (args) => ({
-    content: [{ type: "text", text: await toolPost(args.text, cwd) }],
-  }),
-);
-
-// ── follow ─────────────────────────────────────────────────────────────────
-
-server.tool(
-  "avatar_gateway_follow",
-  "Follow another avatar on Shubur.",
-  {
-    followee_did: z.string().describe("DID of the avatar to follow"),
-  },
-  async (args) => ({
-    content: [{ type: "text", text: await toolFollow(args.followee_did, cwd) }],
-  }),
-);
-
-// ── dm-request ─────────────────────────────────────────────────────────────
-
-server.tool(
-  "avatar_gateway_dm_request",
-  "Send a DM request to another avatar on Shubur. The recipient must accept before messages are delivered.",
-  {
-    to_did: z.string().describe("Recipient avatar DID"),
-    intro: z.string().optional().describe("Optional intro message (shown to recipient with the request)"),
-  },
-  async (args) => ({
-    content: [{ type: "text", text: await toolDmRequest(args.to_did, args.intro ?? "", cwd) }],
-  }),
-);
-
-// ── start-visit ────────────────────────────────────────────────────────────
-
-server.tool(
-  "avatar_gateway_start_visit",
-  "Start a visit from this avatar to another site through the gateway.",
-  {
-    host_site_did: z.string().describe("DID of the site to visit"),
-    purpose: z.string().optional().describe("Short description of visit purpose"),
-  },
-  async (args) => ({
-    content: [{ type: "text", text: await toolStartVisit(args.host_site_did, args.purpose ?? "", cwd) }],
-  }),
-);
-
-// ── stop-visit ─────────────────────────────────────────────────────────────
-
-server.tool(
-  "avatar_gateway_stop_visit",
-  "End an active visit.",
-  {
-    visit_id: z.string().describe("Visit ID to end"),
-  },
-  async (args) => ({
-    content: [{ type: "text", text: await toolStopVisit(args.visit_id, cwd) }],
-  }),
-);
-
-// ── install-pack ───────────────────────────────────────────────────────────
-
-server.tool(
-  "avatar_gateway_install_pack",
-  "Install a marketplace pack by id, registry URL, or local file path.",
-  {
-    pack: z.string().describe("Pack id (e.g. com.avatar-gateway.starter-apartment), URL, or local path"),
-  },
-  async (args) => ({
-    content: [{ type: "text", text: await toolInstallPack(args.pack, cwd) }],
-  }),
-);
-
-// ── customise-apartment ────────────────────────────────────────────────────
-
-server.tool(
-  "avatar_gateway_customise_apartment",
-  "Update the Starter Apartment configuration: avatar look, room colors, furniture, day-cycle timezone.",
-  {
-    avatar_name: z.string().optional(),
-    outfit_color: z.string().optional().describe("Hex color for the avatar's outfit"),
-    skin_tone: z.string().optional().describe("Hex color for the avatar's skin tone"),
-    timezone: z.string().optional().describe("IANA timezone for day-cycle, e.g. America/New_York"),
-    wall_color: z.string().optional(),
-    furniture: z.record(z.string(), z.boolean()).optional().describe("Map of furniture item names to enabled/disabled"),
-  },
-  async (args) => ({
-    content: [{
-      type: "text",
-      text: await toolCustomiseApartment({
-        avatarName: args.avatar_name,
-        outfitColor: args.outfit_color,
-        skinTone: args.skin_tone,
-        timezone: args.timezone,
-        wallColor: args.wall_color,
-        furniture: args.furniture,
-      }, cwd),
-    }],
-  }),
-);
-
-// ── Start server ───────────────────────────────────────────────────────────
-
-const args = process.argv.slice(2);
-const isHttp = args.includes("--http");
-
-if (isHttp) {
-  // Streamable HTTP transport (future: import StreamableHTTPServerTransport when needed)
-  // For now, fall through to stdio with a note
-  process.stderr.write("[avatar-gateway-mcp] HTTP transport not yet configured; using stdio.\n");
+/** Keep the MCP SDK's highly generic overload behind one typed adapter. */
+interface ToolRegistrar {
+  tool(name: string, description: string, shape: object, handler: (args: Record<string, unknown>) => Promise<ToolResult>): void;
 }
 
-const transport = new StdioServerTransport();
-await server.connect(transport);
+function registerTextTool<TShape extends z.ZodRawShape>(
+  server: McpServer,
+  name: string,
+  description: string,
+  shape: TShape,
+  handler: (args: ToolArguments<TShape>) => Promise<string>,
+): void {
+  const registrar = server as unknown as ToolRegistrar;
+  registrar.tool(name, description, shape, async (args) => ({
+    content: [{ type: "text", text: await handler(args as ToolArguments<TShape>) }],
+  }));
+}
+
+function registerTools(server: McpServer, cwd: string): void {
+  registerTextTool(server, "shubur_status", "Check Shubur setup, gateway health, profile, and AI provider configuration for this project.", {}, async () => toolStatus(cwd));
+
+  registerTextTool(server, "shubur_init", "Create a secure local Shubur config and install the Starter Apartment. Shubur Cloud is in development; use a configured HTTPS gateway or local self-hosted gateway.", {
+    mode: z.enum(["self_hosted", "hosted"]).optional(),
+    gateway_url: z.string().url().optional(),
+    tenant_api_key: z.string().min(1).optional(),
+    site_origin: z.string().url().optional(),
+    avatar_name: z.string().trim().min(1).max(100).optional(),
+    ai_provider: z.enum(["openai", "anthropic", "openai_compatible"]).optional(),
+    ai_provider_env_var: z.string().regex(/^[A-Z_][A-Z0-9_]*$/).optional(),
+  }, async (args) => toolInit({
+    mode: args.mode,
+    gatewayUrl: args.gateway_url,
+    tenantApiKey: args.tenant_api_key,
+    siteOrigin: args.site_origin,
+    avatarName: args.avatar_name,
+    aiProvider: args.ai_provider,
+    aiProviderEnvVar: args.ai_provider_env_var,
+  }, cwd));
+
+  registerTextTool(server, "shubur_create_identity", "Generate a local Ed25519 site identity. The private key is stored in a mode-0600 config file and never sent by this tool.", {
+    site_name: z.string().trim().min(1).max(100).optional(),
+    origin: z.string().url().optional(),
+    backend_url: z.string().min(1).max(2048).optional(),
+  }, async (args) => toolCreateIdentity({ siteName: args.site_name, origin: args.origin, backendUrl: args.backend_url }, cwd));
+
+  registerTextTool(server, "shubur_connect_gateway", "Register this site with the configured self-hosted gateway or Shubur Cloud gateway.", {
+    origin: z.string().url(),
+    display_name: z.string().trim().min(1).max(120).optional(),
+    contact: z.string().max(255).optional(),
+    offered_scopes: z.array(z.string().min(1).max(80)).max(32).optional(),
+  }, async (args) => toolConnectGateway({ origin: args.origin, displayName: args.display_name, contact: args.contact, offeredScopes: args.offered_scopes }, cwd));
+
+  registerTextTool(server, "shubur_register_avatar", "Register the primary avatar and create its initial Shubur profile on the configured gateway.", {
+    name: z.string().trim().min(1).max(100),
+    public_bio: z.string().max(500).optional(),
+    look: z.record(z.string(), z.unknown()).optional(),
+  }, async (args) => toolRegisterAvatar({ name: args.name, publicBio: args.public_bio, look: args.look }, cwd));
+
+  registerTextTool(server, "shubur_create_profile", "Create or update the avatar's public Shubur profile and DM/follow consent policies.", {
+    public_bio: z.string().max(500).optional(),
+    follow_policy: z.enum(["open", "approve", "closed"]).optional(),
+    dm_policy: z.enum(["followers", "mutuals", "request", "closed"]).optional(),
+  }, async (args) => toolCreateShuburProfile({ publicBio: args.public_bio, followPolicy: args.follow_policy, dmPolicy: args.dm_policy }, cwd));
+
+  registerTextTool(server, "shubur_post", "Post public text to the configured avatar's Shubur timeline (1–1000 characters).", {
+    text: z.string().trim().min(1).max(1000),
+  }, async (args) => toolPost(args.text, cwd));
+
+  registerTextTool(server, "shubur_follow", "Follow another avatar on Shubur.", {
+    followee_did: z.string().startsWith("did:key:").max(255),
+  }, async (args) => toolFollow(args.followee_did, cwd));
+
+  registerTextTool(server, "shubur_dm_request", "Request a consent-gated DM thread with another Shubur avatar.", {
+    to_did: z.string().startsWith("did:key:").max(255), intro: z.string().max(500).optional(),
+  }, async (args) => toolDmRequest(args.to_did, args.intro ?? "", cwd));
+
+  registerTextTool(server, "shubur_dm_decision", "Accept or reject a pending DM request addressed to this avatar.", {
+    thread_id: z.string().startsWith("dmt_").max(100), decision: z.enum(["accept", "reject"]),
+  }, async (args) => toolAcceptDm(args.thread_id, args.decision, cwd));
+
+  registerTextTool(server, "shubur_read_dms", "List this avatar's DM threads or read messages from one thread. Only thread participants can read messages.", {
+    thread_id: z.string().startsWith("dmt_").max(100).optional(),
+  }, async (args) => toolReadDms(args.thread_id, cwd));
+
+  registerTextTool(server, "shubur_send_dm", "Send a text DM in an accepted Shubur thread (1–1000 characters).", {
+    thread_id: z.string().startsWith("dmt_").max(100), text: z.string().trim().min(1).max(1000),
+  }, async (args) => toolSendDm(args.thread_id, args.text, cwd));
+
+  registerTextTool(server, "shubur_start_visit", "Start a scoped visit from this avatar to another site through the configured avatar-gateway.", {
+    host_site_did: z.string().startsWith("did:key:").max(255), purpose: z.string().max(300).optional(),
+  }, async (args) => toolStartVisit(args.host_site_did, args.purpose ?? "", cwd));
+
+  registerTextTool(server, "shubur_stop_visit", "End an active avatar visit.", {
+    visit_id: z.string().startsWith("vst_").max(100),
+  }, async (args) => toolStopVisit(args.visit_id, cwd));
+
+  registerTextTool(server, "shubur_install_pack", "Install a Shubur Marketplace pack from a registry id, HTTPS URL, or local JSON manifest.", {
+    pack: z.string().trim().min(1).max(2048),
+  }, async (args) => toolInstallPack(args.pack, cwd));
+
+  registerTextTool(server, "shubur_customise_apartment", "Customize the Starter Apartment with a partial ApartmentConfig JSON object: avatar, room theme, furniture flags, layout.rooms/startRoom, props, lighting, dayCycle.timezone/activities, and optional gateway mount. Values are validated and saved locally.", {
+    config_json: z.string().trim().min(2).max(64_000).describe("A JSON object containing a partial ApartmentConfig. Colors are #RRGGBB; dayCycle activities must cover 00:00–24:00 without gaps."),
+  }, async (args) => {
+    let config: unknown;
+    try { config = JSON.parse(args.config_json) as unknown; }
+    catch { throw new Error("config_json must contain valid JSON."); }
+    return toolCustomiseApartment(config, cwd);
+  });
+
+  registerTextTool(server, "shubur_owner_chat", "Talk to the avatar privately through the local owner channel. The BYO provider key is read from the named environment variable and is never sent to avatar-gateway.", {
+    message: z.string().trim().min(1).max(20_000),
+  }, async (args) => toolOwnerChat(args.message, cwd));
+
+  registerTextTool(server, "shubur_read_owner_channel", "Read the recent private owner-channel transcript stored locally in this project. No owner data is fetched through the gateway.", {
+    limit: z.number().int().min(1).max(100).optional(),
+  }, async (args) => toolReadOwnerChannel(cwd, args.limit ?? 20));
+}
+
+export interface HttpMcpOptions {
+  cwd?: string;
+  host?: string;
+  port?: number;
+  path?: string;
+  token?: string;
+  allowedHosts?: string[];
+  allowedOrigins?: string[];
+}
+
+interface McpSession {
+  server: McpServer;
+  transport: StreamableHTTPServerTransport;
+}
+
+function headerHostname(header: string | undefined): string | undefined {
+  if (!header) return undefined;
+  try { return new URL(`http://${header}`).hostname.replace(/^\[|\]$/g, "").toLowerCase(); }
+  catch { return undefined; }
+}
+
+function isLoopbackHost(host: string): boolean {
+  return host === "127.0.0.1" || host === "::1" || host === "localhost";
+}
+
+function sendJson(res: ServerResponse, status: number, body: unknown): void {
+  res.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+  res.end(JSON.stringify(body));
+}
+
+function matchesToken(header: string | undefined, expected: string): boolean {
+  const prefix = "Bearer ";
+  if (!header?.startsWith(prefix)) return false;
+  const actual = Buffer.from(header.slice(prefix.length));
+  const candidate = Buffer.from(expected);
+  return actual.length === candidate.length && timingSafeEqual(actual, candidate);
+}
+
+function handleMcpRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  sessions: Map<string, McpSession>,
+  options: Required<Pick<HttpMcpOptions, "cwd" | "path" | "host">> & { token?: string; allowedHosts: string[]; allowedOrigins: string[] },
+): void {
+  const requestUrl = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+  if (requestUrl.pathname === "/health" && req.method === "GET") return sendJson(res, 200, { status: "ok" });
+  if (requestUrl.pathname !== options.path) return sendJson(res, 404, { error: "not_found" });
+
+  const requestHost = headerHostname(req.headers.host);
+  if (!requestHost || !options.allowedHosts.includes(requestHost)) return sendJson(res, 403, { error: "host_not_allowed" });
+
+  const originHeader = req.headers.origin;
+  if (originHeader) {
+    let originHost: string;
+    try { originHost = new URL(originHeader).origin; }
+    catch { return sendJson(res, 403, { error: "origin_not_allowed" }); }
+    if (!options.allowedOrigins.includes(originHost) && !isLoopbackHost(headerHostname(new URL(originHeader).host) ?? "")) {
+      return sendJson(res, 403, { error: "origin_not_allowed" });
+    }
+  }
+
+  if (options.token && !matchesToken(req.headers.authorization, options.token)) {
+    return sendJson(res, 401, { error: "unauthorized" });
+  }
+
+  if (req.method !== "POST" && req.method !== "GET" && req.method !== "DELETE") {
+    res.setHeader("allow", "GET, POST, DELETE");
+    return sendJson(res, 405, { error: "method_not_allowed" });
+  }
+
+  const rawSessionId = req.headers["mcp-session-id"];
+  const sessionId = typeof rawSessionId === "string" ? rawSessionId : undefined;
+  let session = sessionId ? sessions.get(sessionId) : undefined;
+  if (sessionId && !session) return sendJson(res, 404, { error: "session_not_found" });
+  if (!session && req.method !== "POST") return sendJson(res, 400, { error: "session_required" });
+
+  if (!session) {
+    const mcpServer = new McpServer({ name: "shubur", version: "0.2.0" });
+    registerTools(mcpServer, options.cwd);
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: randomUUID,
+      enableJsonResponse: true,
+      onsessioninitialized: (id) => { sessions.set(id, { server: mcpServer, transport }); },
+    });
+    session = { server: mcpServer, transport };
+    transport.onclose = () => {
+      if (transport.sessionId) sessions.delete(transport.sessionId);
+      void mcpServer.close();
+    };
+    void mcpServer.connect(transport).then(() => transport.handleRequest(req, res)).catch((error: unknown) => {
+      if (!res.headersSent) sendJson(res, 500, { error: "mcp_request_failed" });
+      else res.destroy(error instanceof Error ? error : undefined);
+    });
+    return;
+  }
+
+  void session.transport.handleRequest(req, res).catch((error: unknown) => {
+    if (!res.headersSent) sendJson(res, 500, { error: "mcp_request_failed" });
+    else res.destroy(error instanceof Error ? error : undefined);
+  });
+}
+
+export async function startHttpMcpServer(options: HttpMcpOptions = {}): Promise<{ server: Server; address: string }> {
+  const host = options.host ?? "127.0.0.1";
+  const port = options.port ?? 4200;
+  const path = options.path ?? "/mcp";
+  if (!path.startsWith("/") || path.includes("?") || path.includes("#")) throw new Error("MCP path must be an absolute path without a query or fragment.");
+  const loopback = isLoopbackHost(host.toLowerCase());
+  const token = options.token ?? process.env.SHUBUR_MCP_TOKEN;
+  const allowedHosts = (options.allowedHosts ?? (loopback ? ["127.0.0.1", "localhost", "::1"] : (process.env.SHUBUR_MCP_ALLOWED_HOSTS ?? "").split(",")))
+    .map((item) => item.trim().toLowerCase()).filter(Boolean);
+  const allowedOrigins = (options.allowedOrigins ?? (process.env.SHUBUR_MCP_ALLOWED_ORIGINS ?? "").split(","))
+    .map((item) => item.trim()).filter(Boolean);
+  if (!loopback && (!token || Buffer.byteLength(token) < 32)) {
+    throw new Error("Binding MCP HTTP outside loopback requires SHUBUR_MCP_TOKEN with at least 32 bytes.");
+  }
+  if (!loopback && allowedHosts.length === 0) throw new Error("Set SHUBUR_MCP_ALLOWED_HOSTS when binding outside loopback.");
+
+  const sessionMap = new Map<string, McpSession>();
+  const server = createHttpServer((req, res) => handleMcpRequest(req, res, sessionMap, {
+    cwd: options.cwd ?? process.cwd(), path, host, token, allowedHosts, allowedOrigins,
+  }));
+  await new Promise<void>((resolveListen, reject) => {
+    server.once("error", reject);
+    server.listen(port, host, () => {
+      server.off("error", reject);
+      resolveListen();
+    });
+  });
+  const addressInfo = server.address();
+  const actualPort = typeof addressInfo === "object" && addressInfo ? addressInfo.port : port;
+  return { server, address: `http://${host}:${actualPort}${path}` };
+}
+
+async function startStdioServer(cwd = process.cwd()): Promise<void> {
+  const server = new McpServer({ name: "shubur", version: "0.2.0" });
+  registerTools(server, cwd);
+  await server.connect(new StdioServerTransport());
+}
+
+function isMainModule(): boolean {
+  const entry = process.argv[1];
+  return Boolean(entry && pathToFileURL(resolve(entry)).href === import.meta.url);
+}
+
+if (isMainModule()) {
+  const args = process.argv.slice(2);
+  if (args.includes("--http")) {
+    const value = (flag: string): string | undefined => {
+      const index = args.indexOf(flag);
+      return index >= 0 ? args[index + 1] : undefined;
+    };
+    const port = Number(value("--port") ?? process.env.SHUBUR_MCP_PORT ?? "4200");
+    if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("--port must be an integer from 0 to 65535.");
+    const { server, address } = await startHttpMcpServer({
+      host: value("--host") ?? process.env.SHUBUR_MCP_HOST ?? "127.0.0.1",
+      port,
+      path: value("--path") ?? "/mcp",
+    });
+    process.stderr.write(`[Shubur MCP] Streamable HTTP listening at ${address}\n`);
+    const stop = (): void => { server.close(); };
+    process.once("SIGTERM", stop);
+    process.once("SIGINT", stop);
+  } else {
+    await startStdioServer();
+  }
+}

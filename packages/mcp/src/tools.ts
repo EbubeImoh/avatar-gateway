@@ -3,8 +3,17 @@
  * Each function is called by the MCP server's tool dispatcher.
  */
 
-import { generateIdentity } from "@avatar-gateway/gateway";
-import { readConfig, writeConfig, mergeConfig } from "./config.js";
+import { randomUUID } from "node:crypto";
+import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { AvatarRuntime, OpenAICompatibleProvider, OpenAIProvider, AnthropicProvider } from "@avatar-gateway/avatar-runtime";
+import type { LLMProvider } from "@avatar-gateway/avatar-runtime";
+import { generateIdentity, signGatewayRequest } from "@avatar-gateway/gateway";
+import { resolveConfig } from "@avatar-gateway/starter-apartment";
+import type { ApartmentConfig } from "@avatar-gateway/starter-apartment";
+import { runInit } from "shubur";
+import type { AiProvider, GatewayMode } from "shubur";
+import { readConfig, mergeConfig, validateGatewayUrl, validateSiteOrigin } from "./config.js";
 import type { AvatarGatewayConfig } from "./config.js";
 
 // ── Gateway API helpers ────────────────────────────────────────────────────
@@ -14,18 +23,28 @@ async function gatewayFetch(
   path: string,
   init: RequestInit = {},
 ): Promise<unknown> {
-  const url = `${config.gatewayUrl}${path}`;
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    ...(init.headers as Record<string, string> ?? {}),
-  };
-  if (config.tenantApiKey) headers["x-tenant-key"] = config.tenantApiKey;
-
-  const res = await fetch(url, { ...init, headers, signal: AbortSignal.timeout(10_000) });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Gateway error ${res.status}: ${body}`);
+  const base = validateGatewayUrl(config.gatewayUrl, config.mode);
+  if (!path.startsWith("/") || path.startsWith("//") || path.includes("\\")) throw new Error("Invalid gateway route.");
+  const url = new URL(path, base);
+  if (url.origin !== new URL(base).origin) throw new Error("Gateway route escaped the configured gateway origin.");
+  const headers = new Headers(init.headers);
+  if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  if (config.tenantApiKey) headers.set("x-tenant-key", config.tenantApiKey);
+  const method = (init.method ?? "GET").toUpperCase();
+  const requiresSignature = (method !== "GET" && method !== "HEAD") || path.startsWith("/v1/dms");
+  if (requiresSignature) {
+    if (!config.sitePrivateKeyPem || !config.siteDid) throw new Error("A registered site signing identity is required for gateway changes.");
+    const body = typeof init.body === "string" ? init.body : "";
+    for (const [name, value] of Object.entries(signGatewayRequest(method, path, body, config.sitePrivateKeyPem))) headers.set(name, value);
+    headers.set("x-ag-site-did", config.siteDid);
   }
+
+  const res = await fetch(url, { ...init, headers, redirect: "error", signal: AbortSignal.timeout(10_000) });
+  if (!res.ok) {
+    const body = (await res.text()).slice(0, 240);
+    throw new Error(`Gateway error ${res.status}${body ? `: ${body}` : ""}`);
+  }
+  if (res.status === 204) return undefined;
   return res.json();
 }
 
@@ -34,7 +53,7 @@ async function gatewayFetch(
 export async function toolStatus(cwd: string): Promise<string> {
   const config = await readConfig(cwd);
   if (!config) {
-    return "No avatar-gateway config found in this directory. Run `avatar_gateway_init` to get started.";
+    return "No Shubur config found in this directory. Run `shubur_init` to get started.";
   }
   const lines = [
     `Gateway: ${config.gatewayUrl} (${config.mode})`,
@@ -58,28 +77,40 @@ export async function toolStatus(cwd: string): Promise<string> {
 // ── Tool: init ─────────────────────────────────────────────────────────────
 
 export interface InitOptions {
-  mode?: "self_hosted" | "hosted";
+  mode?: GatewayMode;
   gatewayUrl?: string;
   tenantApiKey?: string;
   avatarName?: string;
-  aiProvider?: string;
+  siteOrigin?: string;
+  aiProvider?: AiProvider;
   aiProviderEnvVar?: string;
 }
 
-export async function toolInit(opts: InitOptions, cwd: string): Promise<string> {
-  const config = await readConfig(cwd) ?? {} as Partial<AvatarGatewayConfig>;
-  const merged: AvatarGatewayConfig = {
-    mode: opts.mode ?? config.mode ?? "self_hosted",
-    gatewayUrl: opts.gatewayUrl ?? config.gatewayUrl ?? "http://localhost:4100",
-    tenantApiKey: opts.tenantApiKey ?? config.tenantApiKey,
-    avatarName: opts.avatarName ?? config.avatarName ?? "My Avatar",
-    aiProvider: opts.aiProvider ?? config.aiProvider ?? "openai",
-    aiProviderEnvVar: opts.aiProviderEnvVar ?? config.aiProviderEnvVar ?? "OPENAI_API_KEY",
-    backendUrl: config.backendUrl ?? "/avatar-gateway",
-    ...config,
-  };
-  await writeConfig(merged, cwd);
-  return `Config initialised at .avatar-gateway/config.json\nGateway: ${merged.gatewayUrl} (${merged.mode})`;
+export async function toolInit(
+  opts: InitOptions,
+  cwd: string,
+  setupOptions: { installPackages?: boolean; connectGateway?: boolean } = {},
+): Promise<string> {
+  const result = await runInit({
+    yes: true,
+    mode: opts.mode,
+    gatewayUrl: opts.gatewayUrl,
+    tenantApiKey: opts.tenantApiKey,
+    avatarName: opts.avatarName,
+    siteOrigin: opts.siteOrigin,
+    aiProvider: opts.aiProvider,
+    aiProviderEnvVar: opts.aiProviderEnvVar,
+    installPackages: setupOptions.installPackages,
+    connectGateway: setupOptions.connectGateway,
+  }, cwd);
+  return [
+    `Shubur setup ready for ${result.avatarName} (${result.framework}).`,
+    `Site DID: ${result.siteDid}`,
+    `Avatar DID: ${result.avatarDid}`,
+    `Gateway: ${result.gatewayUrl} (${result.mode})`,
+    `Packages installed: ${result.packagesInstalled ? "yes" : "no"}`,
+    `Profile: ${result.profilePublished ? "registered with gateway" : "saved locally as .avatar-gateway/profile.json"}`,
+  ].join("\n");
 }
 
 // ── Tool: create-identity ──────────────────────────────────────────────────
@@ -91,12 +122,18 @@ export interface CreateIdentityOptions {
 }
 
 export async function toolCreateIdentity(opts: CreateIdentityOptions, cwd: string): Promise<string> {
+  const backendUrl = opts.backendUrl ?? "/avatar-gateway";
+  if (!backendUrl.startsWith("/") || backendUrl.startsWith("//") || backendUrl.includes("\\")) {
+    throw new Error("Backend URL must be a same-origin absolute path such as /avatar-gateway.");
+  }
+  const existingConfig = await readConfig(cwd);
   const identity = generateIdentity();
   await mergeConfig({
     siteDid: identity.did,
     sitePrivateKeyPem: identity.privateKeyPem,
     sitePublicKeyPem: identity.publicKeyPem,
-    backendUrl: opts.backendUrl ?? "/avatar-gateway",
+    backendUrl,
+    ...(opts.origin ? { siteOrigin: validateSiteOrigin(opts.origin, existingConfig?.mode ?? "self_hosted") } : {}),
   }, cwd);
   return [
     "Identity created:",
@@ -117,15 +154,16 @@ export interface ConnectGatewayOptions {
 
 export async function toolConnectGateway(opts: ConnectGatewayOptions, cwd: string): Promise<string> {
   const config = await readConfig(cwd);
-  if (!config) return "Run avatar_gateway_init first.";
-  if (!config.siteDid || !config.sitePublicKeyPem) return "Run avatar_gateway_create_identity first.";
+  if (!config) return "Run shubur_init first.";
+  if (!config.siteDid || !config.sitePublicKeyPem) return "Run shubur_create_identity first.";
+  const origin = validateSiteOrigin(opts.origin, config.mode);
 
   const body = {
     site_did: config.siteDid,
-    origin: opts.origin,
-    display_name: opts.displayName ?? opts.origin,
+    origin,
+    display_name: opts.displayName ?? origin,
     public_key_pem: config.sitePublicKeyPem,
-    backend_url: `${opts.origin}${config.backendUrl ?? "/avatar-gateway"}`,
+    backend_url: `${origin}${config.backendUrl ?? "/avatar-gateway"}`,
     contact: opts.contact ?? "",
     offered_scopes: opts.offeredScopes ?? ["chat:send", "chat:receive", "page:read-public", "presence:announce"],
   };
@@ -135,7 +173,7 @@ export async function toolConnectGateway(opts: ConnectGatewayOptions, cwd: strin
     body: JSON.stringify(body),
   }) as { site_did: string; status: string };
 
-  await mergeConfig({ backendUrl: body.backend_url }, cwd);
+  await mergeConfig({ siteOrigin: origin }, cwd);
   return `Registered with gateway.\n  Site DID: ${result.site_did}\n  Status: ${result.status}`;
 }
 
@@ -149,7 +187,7 @@ export interface RegisterAvatarOptions {
 
 export async function toolRegisterAvatar(opts: RegisterAvatarOptions, cwd: string): Promise<string> {
   const config = await readConfig(cwd);
-  if (!config?.siteDid) return "Run avatar_gateway_connect_gateway first.";
+  if (!config?.siteDid) return "Run shubur_connect_gateway first.";
 
   const avatarIdentity = generateIdentity();
   const body = {
@@ -165,7 +203,12 @@ export async function toolRegisterAvatar(opts: RegisterAvatarOptions, cwd: strin
     body: JSON.stringify(body),
   }) as { avatar_did: string; status: string };
 
-  await mergeConfig({ avatarDid: avatarIdentity.did, avatarName: opts.name }, cwd);
+  await mergeConfig({
+    avatarDid: avatarIdentity.did,
+    avatarPrivateKeyPem: avatarIdentity.privateKeyPem,
+    avatarPublicKeyPem: avatarIdentity.publicKeyPem,
+    avatarName: opts.name,
+  }, cwd);
   return `Avatar registered.\n  DID: ${result.avatar_did}\n  Name: ${opts.name}\n  Status: ${result.status}`;
 }
 
@@ -179,7 +222,7 @@ export interface CreateShuburProfileOptions {
 
 export async function toolCreateShuburProfile(opts: CreateShuburProfileOptions, cwd: string): Promise<string> {
   const config = await readConfig(cwd);
-  if (!config?.avatarDid) return "Run avatar_gateway_register_avatar first.";
+  if (!config?.avatarDid) return "Run shubur_register_avatar first.";
 
   const body = {
     name: config.avatarName ?? "My Avatar",
@@ -193,7 +236,7 @@ export async function toolCreateShuburProfile(opts: CreateShuburProfileOptions, 
     body: JSON.stringify(body),
   });
 
-  const origin = config.backendUrl ? new URL(config.gatewayUrl).hostname : "gateway.local";
+  const origin = config.siteOrigin ? new URL(config.siteOrigin).hostname : new URL(config.gatewayUrl).hostname;
   const handle = `${(config.avatarName ?? "avatar").toLowerCase().replace(/[^a-z0-9-]/g, "-")}@${origin}`;
   await mergeConfig({ shuburHandle: handle }, cwd);
   return `Shubur profile created/updated.\n  Handle: ${handle}\n  Bio: ${body.public_bio || "(none)"}`;
@@ -203,12 +246,12 @@ export async function toolCreateShuburProfile(opts: CreateShuburProfileOptions, 
 
 export async function toolPost(text: string, cwd: string): Promise<string> {
   const config = await readConfig(cwd);
-  if (!config?.avatarDid) return "Run avatar_gateway_register_avatar first.";
-  if (text.length > 1000) return "Post too long (max 1000 chars)";
+  if (!config?.avatarDid) return "Run shubur_register_avatar first.";
+  if (!text.trim() || text.length > 1000) return "Post must contain 1–1000 characters.";
 
   const result = await gatewayFetch(config, `/v1/agents/${config.avatarDid}/posts`, {
     method: "POST",
-    body: JSON.stringify({ text, nonce: crypto.randomUUID(), ts: new Date().toISOString() }),
+    body: JSON.stringify({ text, nonce: randomUUID(), ts: new Date().toISOString() }),
   }) as { post_id: string };
 
   return `Posted. ID: ${result.post_id}`;
@@ -218,11 +261,11 @@ export async function toolPost(text: string, cwd: string): Promise<string> {
 
 export async function toolFollow(followeeDid: string, cwd: string): Promise<string> {
   const config = await readConfig(cwd);
-  if (!config?.avatarDid) return "Run avatar_gateway_register_avatar first.";
+  if (!config?.avatarDid) return "Run shubur_register_avatar first.";
 
   const result = await gatewayFetch(config, "/v1/follows", {
     method: "POST",
-    body: JSON.stringify({ follower: config.avatarDid, followee: followeeDid, nonce: crypto.randomUUID(), ts: new Date().toISOString() }),
+    body: JSON.stringify({ follower: config.avatarDid, followee: followeeDid, nonce: randomUUID(), ts: new Date().toISOString() }),
   }) as { follow_id: string; status: string };
 
   return `Follow ${result.status}. ID: ${result.follow_id}`;
@@ -232,14 +275,57 @@ export async function toolFollow(followeeDid: string, cwd: string): Promise<stri
 
 export async function toolDmRequest(toDid: string, intro: string, cwd: string): Promise<string> {
   const config = await readConfig(cwd);
-  if (!config?.avatarDid) return "Run avatar_gateway_register_avatar first.";
+  if (!config?.avatarDid) return "Run shubur_register_avatar first.";
 
   const result = await gatewayFetch(config, "/v1/dms/requests", {
     method: "POST",
-    body: JSON.stringify({ from: config.avatarDid, to: toDid, intro, nonce: crypto.randomUUID(), ts: new Date().toISOString() }),
+    body: JSON.stringify({ from: config.avatarDid, to: toDid, intro, nonce: randomUUID(), ts: new Date().toISOString() }),
   }) as { thread_id: string; status: string };
 
   return `DM request sent. Thread: ${result.thread_id}, Status: ${result.status}`;
+}
+
+export async function toolAcceptDm(threadId: string, decision: "accept" | "reject", cwd: string): Promise<string> {
+  const config = await readConfig(cwd);
+  if (!config?.avatarDid) return "Run shubur_register_avatar first.";
+  const result = await gatewayFetch(config, `/v1/dms/${encodeURIComponent(threadId)}/decision`, {
+    method: "POST",
+    body: JSON.stringify({ agent_did: config.avatarDid, decision }),
+  }) as { status: string };
+  return `DM request ${result.status}.`;
+}
+
+export async function toolReadDms(threadId: string | undefined, cwd: string): Promise<string> {
+  const config = await readConfig(cwd);
+  if (!config?.avatarDid) return "Run shubur_register_avatar first.";
+  const agent = encodeURIComponent(config.avatarDid);
+  if (!threadId) {
+    const result = await gatewayFetch(config, `/v1/dms?agent_did=${agent}`) as {
+      threads: Array<{ threadId: string; participant1: string; participant2: string; status: string; intro: string; createdAt: string }>;
+    };
+    return JSON.stringify(result.threads, null, 2);
+  }
+  const result = await gatewayFetch(
+    config,
+    `/v1/dms/${encodeURIComponent(threadId)}/messages?agent_did=${agent}`,
+  ) as { thread_id: string; status: string; intro: string; messages: Array<{ from: string; text: string; createdAt: string }> };
+  return JSON.stringify(result, null, 2);
+}
+
+export async function toolSendDm(threadId: string, text: string, cwd: string): Promise<string> {
+  const config = await readConfig(cwd);
+  if (!config?.avatarDid) return "Run shubur_register_avatar first.";
+  if (!text.trim() || text.length > 1000) return "DM text must contain 1–1000 characters.";
+  const history = await gatewayFetch(
+    config,
+    `/v1/dms/${encodeURIComponent(threadId)}/messages?agent_did=${encodeURIComponent(config.avatarDid)}`,
+  ) as { messages: Array<{ seq: number }> };
+  const seq = Math.max(0, ...history.messages.map((message) => message.seq)) + 1;
+  const result = await gatewayFetch(config, `/v1/dms/${encodeURIComponent(threadId)}/messages`, {
+    method: "POST",
+    body: JSON.stringify({ from: config.avatarDid, text, seq, nonce: randomUUID(), ts: new Date().toISOString() }),
+  }) as { message_id: string };
+  return `DM sent. Message ID: ${result.message_id}`;
 }
 
 // ── Tool: start-visit ──────────────────────────────────────────────────────
@@ -256,7 +342,7 @@ export async function toolStartVisit(hostSiteDid: string, purpose: string, cwd: 
       host_site_did: hostSiteDid,
       requested_scopes: ["chat:send", "chat:receive", "page:read-public"],
       purpose,
-      nonce: crypto.randomUUID(),
+      nonce: randomUUID(),
       ts: new Date().toISOString(),
     }),
   }) as { visit_id: string; status: string; granted_scopes: string[] };
@@ -282,40 +368,152 @@ export async function toolStopVisit(visitId: string, cwd: string): Promise<strin
 export async function toolInstallPack(packIdOrPath: string, cwd: string): Promise<string> {
   // Dynamic import to avoid circular deps and keep the MCP package lean
   const { PackRegistry } = await import("@avatar-gateway/marketplace");
-  const registry = new PackRegistry();
+  const registry = new PackRegistry(undefined, join(cwd, ".avatar-gateway", "packs"));
   try {
     const installed = await registry.install(packIdOrPath);
     return `Pack installed.\n  ID: ${installed.id}\n  Version: ${installed.version}\n  Path: ${installed.installPath}`;
   } catch (err) {
-    return `Install failed: ${(err as Error).message}`;
+    return `Install failed: ${err instanceof Error ? err.message : "unknown error"}`;
   }
 }
 
 // ── Tool: customise-apartment ──────────────────────────────────────────────
 
 export async function toolCustomiseApartment(
-  updates: {
-    avatarName?: string;
-    outfitColor?: string;
-    skinTone?: string;
-    timezone?: string;
-    wallColor?: string;
-    furniture?: Record<string, boolean>;
-  },
+  input: unknown,
   cwd: string,
 ): Promise<string> {
-  const configPath = `${cwd}/.avatar-gateway/apartment.config.json`;
-  let current: Record<string, unknown> = {};
+  if (typeof input !== "object" || input === null || Array.isArray(input)) throw new Error("Apartment customization must be an ApartmentConfig object.");
+  const updates = input as ApartmentConfig;
+  const allowedKeys = new Set(["avatar", "room", "furniture", "layout", "props", "lighting", "dayCycle", "gateway", "assetCredits"]);
+  if (Object.keys(input).some((key) => !allowedKeys.has(key))) throw new Error("ApartmentConfig contains an unsupported top-level field.");
+  const configPath = join(cwd, ".avatar-gateway", "apartment.config.json");
+  let current: ApartmentConfig = {};
   try {
-    const { readFile } = await import("node:fs/promises");
-    current = JSON.parse(await readFile(configPath, "utf8")) as Record<string, unknown>;
-  } catch { /* first time */ }
+    const parsed = JSON.parse(await readFile(configPath, "utf8")) as unknown;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error("not an object");
+    current = resolveConfig(parsed as ApartmentConfig);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error("Apartment config exists but is invalid; it was left untouched.");
+  }
 
-  const merged = { ...current, ...updates };
-  const { writeFile, mkdir } = await import("node:fs/promises");
-  await mkdir(`${cwd}/.avatar-gateway`, { recursive: true });
-  await writeFile(configPath, JSON.stringify(merged, null, 2) + "\n");
+  const merged: ApartmentConfig = {
+    ...current,
+    ...updates,
+    avatar: { ...current.avatar, ...updates.avatar },
+    room: { ...current.room, ...updates.room },
+    furniture: { ...current.furniture, ...updates.furniture },
+    layout: updates.layout ? {
+      ...current.layout,
+      ...updates.layout,
+      rooms: updates.layout.rooms ?? current.layout?.rooms,
+    } : current.layout,
+    props: updates.props ?? current.props,
+    lighting: { ...current.lighting, ...updates.lighting },
+    dayCycle: updates.dayCycle ? {
+      ...current.dayCycle,
+      ...updates.dayCycle,
+      activities: updates.dayCycle.activities ?? current.dayCycle?.activities,
+    } : current.dayCycle,
+    gateway: updates.gateway ?? current.gateway,
+    assetCredits: updates.assetCredits ?? current.assetCredits,
+  };
+  const validated = resolveConfig(merged);
+  const dir = join(cwd, ".avatar-gateway");
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  await chmod(dir, 0o700);
+  const temporary = `${configPath}.${process.pid}.tmp`;
+  await writeFile(temporary, `${JSON.stringify(validated, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  await chmod(temporary, 0o600);
+  await rename(temporary, configPath);
 
   const changes = Object.keys(updates).join(", ");
   return `Apartment config updated: ${changes}\nSaved to .avatar-gateway/apartment.config.json`;
+}
+
+interface OwnerChannelMessage {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  createdAt: string;
+}
+
+const OWNER_CHANNEL_FILE = ".avatar-gateway/owner-channel.json";
+
+async function readOwnerMessages(cwd: string): Promise<OwnerChannelMessage[]> {
+  let raw: string;
+  try {
+    raw = await readFile(join(cwd, OWNER_CHANNEL_FILE), "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw) as unknown; }
+  catch { throw new Error("Owner channel transcript is malformed and was left untouched."); }
+  if (!Array.isArray(parsed)) throw new Error("Owner channel transcript must be an array.");
+  return parsed.map((item): OwnerChannelMessage => {
+    if (typeof item !== "object" || item === null) throw new Error("Owner channel transcript contains an invalid message.");
+    const record = item as Record<string, unknown>;
+    if (typeof record.id !== "string" || (record.role !== "user" && record.role !== "assistant") || typeof record.text !== "string" || typeof record.createdAt !== "string") {
+      throw new Error("Owner channel transcript contains an invalid message.");
+    }
+    return { id: record.id, role: record.role, text: record.text, createdAt: record.createdAt };
+  });
+}
+
+async function saveOwnerMessages(cwd: string, messages: OwnerChannelMessage[]): Promise<void> {
+  const dir = join(cwd, ".avatar-gateway");
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  await chmod(dir, 0o700);
+  const target = join(cwd, OWNER_CHANNEL_FILE);
+  const temporary = `${target}.${process.pid}.tmp`;
+  await writeFile(temporary, `${JSON.stringify(messages.slice(-100), null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  await chmod(temporary, 0o600);
+  await rename(temporary, target);
+}
+
+function makeOwnerProvider(config: AvatarGatewayConfig, provider?: LLMProvider): LLMProvider {
+  if (provider) return provider;
+  const apiKey = process.env[config.aiProviderEnvVar ?? "OPENAI_API_KEY"];
+  if (config.aiProvider === "anthropic") return new AnthropicProvider({ apiKey });
+  if (config.aiProvider === "openai_compatible") {
+    const baseUrl = process.env.OPENAI_BASE_URL;
+    if (!baseUrl) throw new Error("Set OPENAI_BASE_URL for an OpenAI-compatible provider.");
+    const url = new URL(baseUrl);
+    const loopback = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(url.hostname);
+    if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) {
+      throw new Error("OPENAI_BASE_URL must use HTTPS unless it points to loopback.");
+    }
+    return new OpenAICompatibleProvider({ apiKey, baseUrl, model: process.env.OPENAI_MODEL ?? "llama3" });
+  }
+  return new OpenAIProvider({ apiKey });
+}
+
+/** Sends a private owner-channel message directly to the BYO-key provider and stores its transcript locally. */
+export async function toolOwnerChat(message: string, cwd: string, provider?: LLMProvider): Promise<string> {
+  if (!message.trim() || message.length > 20_000) throw new Error("Owner message must contain 1–20,000 characters.");
+  const config = await readConfig(cwd);
+  if (!config) return "Run shubur_init before using the owner channel.";
+  const messages = await readOwnerMessages(cwd);
+  const runtime = new AvatarRuntime({
+    agentName: config.avatarName ?? "My Avatar",
+    ownerDisplayName: "Owner",
+    tone: "helpful and direct",
+    knowledge: [],
+  }, makeOwnerProvider(config, provider));
+  const reply = await runtime.ownerChat(message);
+  const createdAt = new Date().toISOString();
+  messages.push(
+    { id: randomUUID(), role: "user", text: message, createdAt },
+    { id: randomUUID(), role: "assistant", text: reply, createdAt: new Date().toISOString() },
+  );
+  await saveOwnerMessages(cwd, messages);
+  return reply;
+}
+
+/** Reads the local owner-channel transcript. Owner data is never fetched from or sent through the gateway. */
+export async function toolReadOwnerChannel(cwd: string, limit = 20): Promise<string> {
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new Error("limit must be an integer from 1 to 100.");
+  return JSON.stringify((await readOwnerMessages(cwd)).slice(-limit), null, 2);
 }

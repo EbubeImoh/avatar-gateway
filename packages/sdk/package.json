@@ -1,8 +1,7 @@
 {
   "name": "@avatar-gateway/sdk",
   "version": "0.2.0",
-  "private": true,
-  "description": "One-import core SDK: import { Avatar } from '@avatar-gateway/sdk' (or one script tag).",
+  "description": "Have you ever wondered what your agent would be doing if it had a life of its own? Add a Shubur avatar widget with one import.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "dist/index.js",

@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { generateKeyPairSync } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
@@ -8,6 +9,9 @@ import {
   verifyManifestAssets,
   PackRegistry,
   STARTER_APARTMENT_PACK,
+  signPackManifest,
+  verifyPackManifestSignature,
+  validatePackManifest,
 } from "./registry.js";
 import type { PackManifest } from "./types.js";
 import { OpenEntitlementAdapter } from "./types.js";
@@ -33,6 +37,29 @@ describe("verifyPackIntegrity", () => {
   it("returns false when hash mismatches", () => {
     const data = new TextEncoder().encode("pack content");
     expect(verifyPackIntegrity(data, "0".repeat(64))).toBe(false);
+  });
+
+  it("rejects malformed hashes", () => {
+    expect(verifyPackIntegrity(new TextEncoder().encode("pack"), "sha256:123")).toBe(false);
+  });
+});
+
+describe("pack manifest signatures", () => {
+  it("verifies a canonical Ed25519 signature and rejects tampered fields", () => {
+    const pair = generateKeyPairSync("ed25519");
+    const signerPublicKeyPem = pair.publicKey.export({ type: "spki", format: "pem" }).toString();
+    const manifest = signPackManifest({ ...STARTER_APARTMENT_PACK, signerPublicKeyPem }, pair.privateKey.export({ type: "pkcs8", format: "pem" }).toString());
+    expect(verifyPackManifestSignature(manifest)).toBe(true);
+    expect(verifyPackManifestSignature({ ...manifest, description: "Changed after signing" })).toBe(false);
+  });
+
+  it("rejects traversal paths, invalid digests, and incomplete signature metadata", () => {
+    expect(() => validatePackManifest({ ...STARTER_APARTMENT_PACK, id: "../../outside" })).toThrow("id must use lowercase");
+    expect(() => validatePackManifest({
+      ...STARTER_APARTMENT_PACK,
+      assets: [{ path: "../../secret", sha256: "0".repeat(64), licence: "MIT" }],
+    })).toThrow("path is unsafe");
+    expect(() => validatePackManifest({ ...STARTER_APARTMENT_PACK, signerPublicKeyPem: "public" })).toThrow("must be provided together");
   });
 });
 
@@ -105,7 +132,7 @@ describe("PackRegistry.installFromLocalPath", () => {
     expect(installed.id).toBe("com.test.my-pack");
     expect(installed.version).toBe("1.0.0");
     expect(installed.priceTier).toBe("free");
-    expect(installed.installPath).toContain("com.test.my-pack");
+    expect(installed.installPath).toContain("com__test__my-pack");
 
     await rm(tmpDir, { recursive: true, force: true });
   });
@@ -126,6 +153,40 @@ describe("PackRegistry.installFromLocalPath", () => {
     const registry = new PackRegistry("https://example.com", join(tmpDir, "packs"));
     await expect(registry.installFromLocalPath(badFile)).rejects.toThrow("Invalid pack manifest");
     await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("rejects an invalid manifest signature before writing into the pack directory", async () => {
+    const pair = generateKeyPairSync("ed25519");
+    const signerPublicKeyPem = pair.publicKey.export({ type: "spki", format: "pem" }).toString();
+    const signed = signPackManifest({ ...STARTER_APARTMENT_PACK, signerPublicKeyPem }, pair.privateKey.export({ type: "pkcs8", format: "pem" }).toString());
+    const packFile = join(tmpDir, "tampered.json");
+    await writeFile(packFile, JSON.stringify({ ...signed, name: "Tampered" }));
+    const registry = new PackRegistry("https://example.com", join(tmpDir, "packs"));
+    await expect(registry.installFromLocalPath(packFile)).rejects.toThrow("signature verification failed");
+    await expect(registry.listInstalled()).resolves.toEqual([]);
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("requires signatures and an archive digest for remote packs", async () => {
+    const bytes = new TextEncoder().encode(JSON.stringify(STARTER_APARTMENT_PACK));
+    const fetchMock = vi.fn(async () => new Response(bytes, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const registry = new PackRegistry("https://example.com", join(tmpdir(), `shubur-remote-${Date.now()}`));
+      await expect(registry.installFromUrl("https://example.com/pack.json", { expectedSha256: "0".repeat(64) })).rejects.toThrow("SHA-256 mismatch");
+      await expect(registry.installFromUrl("https://example.com/pack.json", { expectedSha256: sha256Hex(bytes) })).rejects.toThrow("must include a valid Ed25519 signature");
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("denies paid packs when no entitlement adapter is configured", async () => {
+    const paidManifest = { ...STARTER_APARTMENT_PACK, id: "com.example.paid", priceTier: "paid" as const };
+    const file = join(tmpDir, "paid.json");
+    await writeFile(file, JSON.stringify(paidManifest));
+    const registry = new PackRegistry("https://example.com", join(tmpDir, "packs"));
+    await expect(registry.installFromLocalPath(file)).rejects.toThrow("Not entitled");
   });
 });
 

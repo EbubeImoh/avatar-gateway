@@ -1,18 +1,24 @@
 {
   "name": "@avatar-gateway/mcp",
   "version": "0.2.0",
-  "description": "avatar-gateway MCP server — lets any MCP-compatible agent (Claude Code, Cursor, Codex, ChatGPT) set up and manage avatars, apartments, Shubur profiles, visits, and gateway config conversationally.",
+  "description": "Shubur MCP server — let an MCP-compatible assistant set up apartments, profiles, visits, DMs, and local owner-channel chat for avatar-gateway.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "avatar-gateway-mcp": "dist/server.js"
+    "shubur-mcp": "dist/server.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.32.2"
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "@avatar-gateway/avatar-runtime": "^0.2.0",
+    "@avatar-gateway/gateway": "^0.2.0",
+    "@avatar-gateway/marketplace": "^0.2.0",
+    "@avatar-gateway/starter-apartment": "^0.2.0",
+    "shubur": "^0.2.0",
+    "zod": "^3.25.76"
   }
 }
