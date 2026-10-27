@@ -1,0 +1,18 @@
+{
+  "name": "@avatar-gateway/mcp",
+  "version": "0.2.0",
+  "description": "avatar-gateway MCP server — lets any MCP-compatible agent (Claude Code, Cursor, Codex, ChatGPT) set up and manage avatars, apartments, Shubur profiles, visits, and gateway config conversationally.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "avatar-gateway-mcp": "dist/server.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2"
+  }
+}

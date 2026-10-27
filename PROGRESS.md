@@ -1,6 +1,6 @@
 # Project progress
 
-**Status:** v0.2 in progress. The complete target and security requirements are in [SPEC.md](SPEC.md).
+**Status:** v0.2 complete. The complete target and security requirements are in [SPEC.md](SPEC.md).
 
 ## Done (v0.1)
 
@@ -23,14 +23,22 @@
 - **Social layer** (all wired into the gateway server): profiles, timelines/posts, follows (open/approve/closed), DMs (consent-gate + store-and-forward), shared activity feed.
 - **`npm run dev`** starts gateway + both demo sites via `concurrently`.
 - **Shubur branding**: the agent social network is named **Shubur** (`@avatar-gateway/shubur`). Applied across README, landing page, docs, and `docs/TWITTER_PITCH.md`. The `packages/social/` directory has been renamed to `packages/shubur/`.
-- **Starter Apartment** (`@avatar-gateway/starter-apartment`): drop-in apartment scene replicating the "lives its day" concept from Ebube's portfolio (https://www.ebubeimoh.com/). Brick-style avatar at a desk, day-cycle activities driven by local timezone (default: Africa/Lagos), configurable avatar look/room/furniture/lighting. Ships React `<ApartmentScene>` component and plain `mount()` function, wired to `Avatar.mount`. 80 tests pass across 7 test suites.
+- **Starter Apartment** (`@avatar-gateway/starter-apartment`): drop-in apartment scene replicating the "lives its day" concept from Ebube's portfolio. React `<ApartmentScene>` + plain `mount()`, wired to `Avatar.mount`. Typed `ApartmentConfig`, day-cycle (default: Africa/Lagos), configurable look/room/furniture/lighting.
+- **Monetisation — open-core model**: tenant system in gateway (`TenantRecord`, per-tenant quotas, usage metering events, `BillingAdapter` interface). `POST /v1/tenants` and `GET /v1/tenants/:id/usage` REST endpoints. No payment provider hard-wired.
+- **Marketplace** (`@avatar-gateway/marketplace`): `PackManifest` + `RegistryEntry` + `InstalledPack` types. `PackRegistry` class: fetch registry index, search, install from id/URL/local path, verify SHA-256, list installed. `EntitlementAdapter` interface. Starter Apartment is the first free pack (`com.avatar-gateway.starter-apartment`).
+- **MCP server** (`@avatar-gateway/mcp`): MCP server (stdio transport, `--http` flag stub for streamable HTTP) with 13 registered tools: `avatar_gateway_status`, `init`, `create_identity`, `connect_gateway`, `register_avatar`, `create_shubur_profile`, `post`, `follow`, `dm_request`, `start_visit`, `stop_visit`, `install_pack`, `customise_apartment`. Config read/write to `.avatar-gateway/config.json`.
+- **CLI** (`@avatar-gateway/cli`): `npx avatar-gateway@latest init` — interactive (readline) + `--yes` mode. Framework detection (Next.js, React+Vite, Vite, plain HTML). Writes identity, scaffold files, config. `create-avatar-gateway` alias.
+- **Docs**: `docs/hosting.md` (self-host + Shubur Cloud coming soon), `docs/marketplace.md` (pack format, entitlement), `docs/BUSINESS.md` (open-core model, no invented prices), `docs/mcp.md` (copy-paste MCP config for Claude Code, Cursor, Windsurf, Codex).
+- **Landing page**: 3-step quickstart, MCP config snippet, self-host vs hosted section, marketplace section.
+- **README**: 3-step quickstart at top, open-core statement, all packages listed, all new docs linked.
+- **Tests**: 116 tests pass across 10 suites.
 
 ## How to run
 
 ```bash
 npm install
 npm run build
-npm test        # 80 tests, 7 suites
+npm test        # 116 tests, 10 suites
 npm run dev     # gateway on :4100, demo-site-a on :3001, demo-site-b on :3002
 ```
 
@@ -58,3 +66,7 @@ export ANTHROPIC_API_KEY=sk-ant-...   # for Anthropic
 - GitHub Pages: <https://ebubeimoh.github.io/avatar-gateway/>
 - Starter Apartment docs: [docs/starter-pack.md](docs/starter-pack.md)
 - Shubur social network docs: [docs/social-network.md](docs/social-network.md)
+- Hosting guide: [docs/hosting.md](docs/hosting.md)
+- Marketplace: [docs/marketplace.md](docs/marketplace.md)
+- Business model: [docs/BUSINESS.md](docs/BUSINESS.md)
+- MCP server: [docs/mcp.md](docs/mcp.md)

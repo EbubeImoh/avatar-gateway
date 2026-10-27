@@ -30,6 +30,9 @@ import {
   type SiteRecord,
   type AvatarRecord,
   type VisitRecord,
+  type BillingAdapter,
+  type TenantRecord,
+  DEFAULT_TENANT_QUOTAS,
 } from "./storage.js";
 
 export interface GatewayServerOptions {
@@ -43,6 +46,13 @@ export interface GatewayServerOptions {
   port?: number;
   /** HTTPS TLS options */
   https?: { key: string; cert: string; ca?: string };
+  /** Optional billing adapter for usage metering (no payment provider hard-wired). */
+  billingAdapter?: BillingAdapter;
+  /**
+   * If true, all API requests require x-tenant-key header (hosted/cloud mode).
+   * Self-hosted deployments leave this false (open, no tenant auth).
+   */
+  hostedMode?: boolean;
 }
 
 export interface GatewayServer {
@@ -62,6 +72,7 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
   const storage = new GatewayStorage(opts.dbPath ?? ":memory:");
   const gatewayIdentity = generateIdentity();
   const jtiCache = new JtiReplayCache();
+  const billingAdapter = opts.billingAdapter;
 
   // Active WebSocket sessions: visitId → { visitor?: WebSocket; host?: WebSocket }
   const wsSessions = new Map<string, { visitor?: WebSocket; host?: WebSocket }>();
@@ -656,6 +667,64 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
       const limit = Math.min(parseInt(request.query.limit ?? "50", 10), 100);
       const activities = storage.getActivityFeed(limit, request.query.cursor, request.query.following_of);
       return reply.send({ activities, next_cursor: activities.at(-1)?.createdAt });
+    },
+  );
+
+  // ===== Tenants (hosted/cloud mode) =====
+
+  app.post<{ Body: { name: string; plan?: string } }>(
+    "/v1/tenants",
+    async (request, reply) => {
+      const body = request.body;
+      if (!body?.name) return reply.status(400).send({ type: "invalid_request", detail: "name required" });
+      const plan = (body.plan ?? "starter") as TenantRecord["plan"];
+      if (!["self_hosted", "starter", "pro", "enterprise"].includes(plan)) {
+        return reply.status(400).send({ type: "invalid_request", detail: "invalid plan" });
+      }
+      const { randomBytes } = await import("node:crypto");
+      const apiKey = `ag_${randomBytes(24).toString("base64url")}`;
+      const tenant: TenantRecord = {
+        tenantId: `ten_${randomUUID()}`,
+        name: body.name,
+        plan,
+        apiKey,
+        quotas: DEFAULT_TENANT_QUOTAS[plan],
+        usageResetAt: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+      };
+      storage.createTenant(tenant);
+      storage.appendAudit("tenant.created", tenant.tenantId, { name: body.name, plan });
+      return reply.status(201).send({
+        tenant_id: tenant.tenantId,
+        api_key: apiKey,
+        plan,
+        quotas: tenant.quotas,
+      });
+    },
+  );
+
+  app.get<{ Params: { id: string }; Headers: { "x-tenant-key"?: string } }>(
+    "/v1/tenants/:id/usage",
+    async (request, reply) => {
+      const key = request.headers["x-tenant-key"];
+      if (!key) return reply.status(401).send({ type: "unauthorized" });
+      const tenant = storage.getTenantByApiKey(key);
+      if (!tenant || tenant.tenantId !== request.params.id) {
+        return reply.status(403).send({ type: "forbidden" });
+      }
+      const today = new Date();
+      today.setUTCHours(0, 0, 0, 0);
+      const since = today.toISOString();
+      return reply.send({
+        tenant_id: tenant.tenantId,
+        plan: tenant.plan,
+        quotas: tenant.quotas,
+        usage: {
+          visits_today: storage.getTenantDailyUsage(tenant.tenantId, "visit.started", since),
+          posts_today: storage.getTenantDailyUsage(tenant.tenantId, "post.created", since),
+          dm_requests_today: storage.getTenantDailyUsage(tenant.tenantId, "dm.sent", since),
+        },
+      });
     },
   );
 

@@ -115,6 +115,54 @@ export interface ActivityRecord {
   createdAt: string;
 }
 
+// ── Tenant / hosted-mode types ───────────────────────────────────────────
+
+export type TenantPlan = "self_hosted" | "starter" | "pro" | "enterprise";
+
+export interface TenantQuotas {
+  maxSites: number;
+  maxAvatars: number;
+  visitsPerDay: number;
+  postsPerDay: number;
+  dmRequestsPerDay: number;
+  apiCallsPerMinute: number;
+}
+
+export interface TenantRecord {
+  tenantId: string;
+  name: string;
+  plan: TenantPlan;
+  apiKey: string;          // hashed SHA-256 hex before storage
+  quotas: TenantQuotas;
+  usageResetAt: string;    // ISO — daily reset timestamp
+  createdAt: string;
+}
+
+export interface UsageMeteringEvent {
+  tenantId: string;
+  eventType: "visit.started" | "post.created" | "dm.sent" | "api.call" | "page.read";
+  quantity: number;
+  ts: string;
+  metadata?: Record<string, unknown>;
+}
+
+/** Pluggable billing adapter interface — no payment provider hard-wired. */
+export interface BillingAdapter {
+  /** Called when metered usage is recorded. Implementations may batch. */
+  onUsage(event: UsageMeteringEvent): Promise<void>;
+  /** Returns true if the tenant is entitled to perform the requested action. */
+  checkEntitlement(tenantId: string, resource: string): Promise<boolean>;
+  /** Called when a tenant's plan changes. */
+  onPlanChange(tenantId: string, newPlan: TenantPlan): Promise<void>;
+}
+
+export const DEFAULT_TENANT_QUOTAS: Record<TenantPlan, TenantQuotas> = {
+  self_hosted:  { maxSites: 999, maxAvatars: 999, visitsPerDay: 9999, postsPerDay: 999,  dmRequestsPerDay: 999, apiCallsPerMinute: 999 },
+  starter:      { maxSites: 1,   maxAvatars: 3,   visitsPerDay: 50,   postsPerDay: 10,   dmRequestsPerDay: 5,   apiCallsPerMinute: 30  },
+  pro:          { maxSites: 5,   maxAvatars: 20,  visitsPerDay: 500,  postsPerDay: 100,  dmRequestsPerDay: 50,  apiCallsPerMinute: 120 },
+  enterprise:   { maxSites: 999, maxAvatars: 999, visitsPerDay: 9999, postsPerDay: 9999, dmRequestsPerDay: 999, apiCallsPerMinute: 999 },
+};
+
 export class GatewayStorage {
   private readonly db: Database.Database;
   private auditChainHead = "0000000000000000000000000000000000000000000000000000000000000000";
@@ -244,6 +292,25 @@ export class GatewayStorage {
         summary TEXT NOT NULL,
         visibility TEXT NOT NULL DEFAULT 'public',
         created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS tenants (
+        tenant_id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        plan TEXT NOT NULL DEFAULT 'self_hosted',
+        api_key_hash TEXT NOT NULL UNIQUE,
+        quotas TEXT NOT NULL,
+        usage_reset_at TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS tenant_usage (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL REFERENCES tenants(tenant_id),
+        event_type TEXT NOT NULL,
+        quantity INTEGER NOT NULL DEFAULT 1,
+        ts TEXT NOT NULL,
+        metadata TEXT NOT NULL DEFAULT '{}'
       );
     `);
 
@@ -623,6 +690,85 @@ export class GatewayStorage {
       visibility: r.visibility as "public" | "private",
       createdAt: r.created_at as string,
     }));
+  }
+
+  // --- Tenants ---
+
+  createTenant(record: TenantRecord): void {
+    this.db.prepare(`
+      INSERT OR REPLACE INTO tenants
+        (tenant_id, name, plan, api_key_hash, quotas, usage_reset_at, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      record.tenantId, record.name, record.plan,
+      createHash("sha256").update(record.apiKey).digest("hex"),
+      JSON.stringify(record.quotas), record.usageResetAt, record.createdAt,
+    );
+  }
+
+  getTenantByApiKey(apiKey: string): TenantRecord | undefined {
+    const hash = createHash("sha256").update(apiKey).digest("hex");
+    const row = this.db.prepare<[string], Record<string, unknown>>(
+      "SELECT * FROM tenants WHERE api_key_hash = ?"
+    ).get(hash);
+    if (!row) return undefined;
+    return {
+      tenantId: row.tenant_id as string,
+      name: row.name as string,
+      plan: row.plan as TenantPlan,
+      apiKey: apiKey,
+      quotas: JSON.parse(row.quotas as string) as TenantQuotas,
+      usageResetAt: row.usage_reset_at as string,
+      createdAt: row.created_at as string,
+    };
+  }
+
+  getTenant(tenantId: string): TenantRecord | undefined {
+    const row = this.db.prepare<[string], Record<string, unknown>>(
+      "SELECT * FROM tenants WHERE tenant_id = ?"
+    ).get(tenantId);
+    if (!row) return undefined;
+    return {
+      tenantId: row.tenant_id as string,
+      name: row.name as string,
+      plan: row.plan as TenantPlan,
+      apiKey: "",
+      quotas: JSON.parse(row.quotas as string) as TenantQuotas,
+      usageResetAt: row.usage_reset_at as string,
+      createdAt: row.created_at as string,
+    };
+  }
+
+  recordUsage(event: UsageMeteringEvent, billingAdapter?: BillingAdapter): void {
+    this.db.prepare(`
+      INSERT INTO tenant_usage (id, tenant_id, event_type, quantity, ts, metadata)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(`usg_${randomUUID()}`, event.tenantId, event.eventType, event.quantity, event.ts, JSON.stringify(event.metadata ?? {}));
+    if (billingAdapter) {
+      billingAdapter.onUsage(event).catch(() => { /* non-fatal */ });
+    }
+  }
+
+  getTenantDailyUsage(tenantId: string, eventType: UsageMeteringEvent["eventType"], since: string): number {
+    const row = this.db.prepare<[string, string, string], { total: number }>(
+      "SELECT COALESCE(SUM(quantity), 0) AS total FROM tenant_usage WHERE tenant_id = ? AND event_type = ? AND ts >= ?"
+    ).get(tenantId, eventType, since);
+    return row?.total ?? 0;
+  }
+
+  checkTenantQuota(tenantId: string, resource: "visitsPerDay" | "postsPerDay" | "dmRequestsPerDay"): { allowed: boolean; used: number; limit: number } {
+    const tenant = this.getTenant(tenantId);
+    if (!tenant) return { allowed: true, used: 0, limit: 9999 };
+    const dayStart = new Date();
+    dayStart.setUTCHours(0, 0, 0, 0);
+    const eventMap: Record<string, UsageMeteringEvent["eventType"]> = {
+      visitsPerDay: "visit.started",
+      postsPerDay: "post.created",
+      dmRequestsPerDay: "dm.sent",
+    };
+    const used = this.getTenantDailyUsage(tenantId, eventMap[resource], dayStart.toISOString());
+    const limit = tenant.quotas[resource];
+    return { allowed: used < limit, used, limit };
   }
 
   close(): void { this.db.close(); }

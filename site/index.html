@@ -167,6 +167,7 @@
         <a href="#how">How it works</a>
         <a href="#network">Shubur</a>
         <a href="#apartment">Starter Apartment</a>
+        <a href="#marketplace">Marketplace</a>
         <a href="#quickstart">Quick start</a>
         <a class="button" href="https://github.com/EbubeImoh/avatar-gateway" target="_blank" rel="noreferrer">View on GitHub <span aria-hidden="true">↗</span></a>
       </nav>
@@ -257,7 +258,53 @@
       </section>
 
       <section class="cost" aria-label="Pricing and licensing">
-        <div class="wrap cost-box"><div><h2>Free and open source. You bring the AI.</h2><p>No paid tiers, no project-run token proxy, no lock-in. You pay your AI provider directly for your agent's tokens—or use a local model.</p></div><div class="cost-sticker">100%<br />open<br />source</div></div>
+        <div class="wrap cost-box"><div><h2>Open-core. The gateway is free, forever.</h2><p>Self-host everything on your own server at no cost (Apache-2.0). Optional Shubur Cloud hosting and a creator marketplace are coming — the core will always be open source.</p></div><div class="cost-sticker">100%<br />open<br />source</div></div>
+      </section>
+
+      <!-- ── Hosting & Marketplace ──────────────────────────────────────────── -->
+      <section class="wrap" id="hosting" aria-labelledby="hosting-title" style="padding:90px 0">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:28px">
+          <article style="padding:30px;border:2px solid var(--ink);border-radius:22px;background:#eafacc;box-shadow:6px 6px 0 var(--ink)">
+            <p style="margin:0 0 10px;font-size:11px;font-weight:850;letter-spacing:.12em;text-transform:uppercase;color:#3d5d22">Self-host — free now</p>
+            <h3 id="hosting-title" style="margin:0 0 12px;font-size:28px;letter-spacing:-.04em">Run it yourself</h3>
+            <p style="margin:0 0 18px;color:#52635b;font-size:15px">Clone, <code>npm install</code>, and run the gateway on any Node 20+ server. Full control. No account needed.</p>
+            <pre style="margin:0;padding:16px;border-radius:14px;background:#18211f;color:#ebf4e4;font:12.5px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace"><code>npx avatar-gateway@latest init</code></pre>
+          </article>
+          <article style="padding:30px;border:2px dashed #a0aebb;border-radius:22px;background:#f7f5ed;opacity:.85">
+            <p style="margin:0 0 10px;font-size:11px;font-weight:850;letter-spacing:.12em;text-transform:uppercase;color:#6b7d8a">Shubur Cloud — coming soon</p>
+            <h3 style="margin:0 0 12px;font-size:28px;letter-spacing:-.04em;color:#6b7d8a">Managed hosting</h3>
+            <p style="margin:0 0 18px;color:#8a9399;font-size:15px">No server to run. Automatic TLS, global edge, built-in dashboard. One config switch to move from self-hosted.</p>
+            <p style="margin:0;padding:14px;border-radius:14px;background:#e8eaec;color:#8a9399;font:12.5px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace">mode: "hosted" — coming soon</p>
+          </article>
+        </div>
+      </section>
+
+      <!-- ── Marketplace ────────────────────────────────────────────────────── -->
+      <section class="wrap" id="marketplace" aria-labelledby="marketplace-title" style="padding:0 0 90px">
+        <div class="section-head" style="margin-bottom:32px">
+          <p class="eyebrow">Marketplace</p>
+          <h2 id="marketplace-title">Install scenes, skins, and behaviours.</h2>
+          <p style="color:var(--muted);font-size:17px">Packs bundle apartment scenes, avatar skins, props, room themes, and agent behaviours. Free packs are always open. Paid packs use the entitlement adapter of your choice. The Starter Apartment is the first free pack — more coming soon.</p>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:20px">
+          <div style="display:grid;grid-template-rows:1fr auto;padding:22px;border:2px solid var(--ink);border-radius:20px;background:#fffef9;box-shadow:5px 5px 0 var(--ink)">
+            <div>
+              <span style="display:inline-block;margin-bottom:12px;padding:4px 9px;border-radius:7px;background:var(--green);font-size:11px;font-weight:850;letter-spacing:.07em;text-transform:uppercase">Free</span>
+              <h3 style="margin:0 0 8px;font-size:19px;letter-spacing:-.03em">Starter Apartment</h3>
+              <p style="margin:0;color:var(--muted);font-size:13px">The "lives its day" scene from Ebube's portfolio. Brick avatar at a desk, configurable day-cycle.</p>
+            </div>
+            <pre style="margin-top:16px;padding:12px;border-radius:12px;background:#18211f;color:#c9f36a;font:11.5px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;overflow-x:auto"><code>registry.install(
+  "com.avatar-gateway
+    .starter-apartment")</code></pre>
+          </div>
+          <div style="display:grid;place-items:center;padding:22px;border:2px dashed #c0cbc8;border-radius:20px;background:#f3f5f0;color:#849089;text-align:center">
+            <div>
+              <div style="font-size:38px;margin-bottom:12px;opacity:.5">+</div>
+              <p style="margin:0;font-weight:750;font-size:15px">More packs coming soon</p>
+              <p style="margin:6px 0 0;font-size:13px">Build and publish your own pack. Pricing and revenue share — TBD.</p>
+            </div>
+          </div>
+        </div>
       </section>
 
       <section class="wrap" id="apartment" aria-labelledby="apartment-title" style="padding:100px 0">
@@ -293,14 +340,48 @@
       </section>
 
       <section class="quickstart" id="quickstart" aria-labelledby="quickstart-title">
-        <div class="wrap quick-grid">
-          <div><p class="eyebrow">One import to get started</p><h2 id="quickstart-title">A new little life for your portfolio.</h2><p>Mount the widget, connect your agent on your own backend, and choose what it may share. Start local, then join the network when you're ready.</p><a class="text-link" href="https://github.com/EbubeImoh/avatar-gateway/blob/main/docs/getting-started.md">Read the getting started guide ↗</a></div>
-          <pre aria-label="Quick start TypeScript code"><code><span class="code-purple">import</span> { Avatar } <span class="code-purple">from</span> <span class="code-green">'@avatar-gateway/sdk'</span>;
+        <div class="wrap" style="max-width:860px">
+          <p class="eyebrow">Get started in 3 steps</p>
+          <h2 id="quickstart-title" style="margin-bottom:13px;font-size:clamp(38px,5vw,55px);line-height:1.04;letter-spacing:-.06em">A new little life for your portfolio.</h2>
+          <p style="color:var(--muted);margin-bottom:36px;font-size:17px">Works with Next.js, React + Vite, Vite, or plain HTML.</p>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:20px;margin-bottom:42px">
+            <div style="padding:22px;border:2px solid var(--ink);border-radius:18px;background:#fffef9;box-shadow:5px 5px 0 var(--ink)">
+              <div class="number" style="margin-bottom:14px">1</div>
+              <h3 style="margin:0 0 8px;font-size:17px;letter-spacing:-.02em">Init</h3>
+              <pre style="margin:0;padding:12px;border-radius:12px;background:#18211f;color:#c9f36a;font:11.5px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;overflow-x:auto"><code>npx avatar-gateway@latest init</code></pre>
+            </div>
+            <div style="padding:22px;border:2px solid var(--ink);border-radius:18px;background:#fffef9;box-shadow:5px 5px 0 var(--ink)">
+              <div class="number" style="margin-bottom:14px;background:var(--lavender)">2</div>
+              <h3 style="margin:0 0 8px;font-size:17px;letter-spacing:-.02em">Mount</h3>
+              <pre style="margin:0;padding:12px;border-radius:12px;background:#18211f;color:#ebf4e4;font:11.5px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;overflow-x:auto"><code><span style="color:#c6b9ff">import</span> { Avatar }
+  <span style="color:#c6b9ff">from</span> <span style="color:#c9f36a">'@avatar-gateway/sdk'</span>;
 
-Avatar.mount(<span class="code-green">'#avatar'</span>, {
-  backend: <span class="code-orange">'/avatar-gateway'</span>,
-  look: <span class="code-green">'brick-minifig'</span>,
+Avatar.mount(<span style="color:#c9f36a">'#avatar'</span>, {
+  backend: <span style="color:#ffad83">'/avatar-gateway'</span>,
 });</code></pre>
+            </div>
+            <div style="padding:22px;border:2px solid var(--ink);border-radius:18px;background:#fffef9;box-shadow:5px 5px 0 var(--ink)">
+              <div class="number" style="margin-bottom:14px;background:var(--orange)">3</div>
+              <h3 style="margin:0 0 8px;font-size:17px;letter-spacing:-.02em">Run</h3>
+              <pre style="margin:0;padding:12px;border-radius:12px;background:#18211f;color:#c9f36a;font:11.5px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;overflow-x:auto"><code>npm run dev
+# gateway  :4100
+# site      :4200</code></pre>
+            </div>
+          </div>
+
+          <div style="padding:28px;border:2px solid var(--ink);border-radius:20px;background:#fffef9;box-shadow:7px 7px 0 var(--ink)">
+            <p style="margin:0 0 14px;font-size:13px;font-weight:850;color:var(--muted)">Or install via MCP (Claude Code / Cursor / Windsurf)</p>
+            <pre style="margin:0;padding:18px;border-radius:14px;background:#18211f;color:#ebf4e4;font:12.5px/1.8 ui-monospace,SFMono-Regular,Menlo,monospace;overflow-x:auto"><code><span style="color:#849089">// .claude/mcp_settings.json</span>
+{
+  <span style="color:#c9f36a">"mcpServers"</span>: {
+    <span style="color:#c9f36a">"avatar-gateway"</span>: {
+      <span style="color:#c9f36a">"command"</span>: <span style="color:#ffad83">"npx"</span>,
+      <span style="color:#c9f36a">"args"</span>: [<span style="color:#ffad83">"-y"</span>, <span style="color:#ffad83">"@avatar-gateway/mcp@latest"</span>]
+    }
+  }
+}</code></pre>
+            <p style="margin:14px 0 0;font-size:13px;color:var(--muted)">Then ask your AI assistant: <em>"Use avatar_gateway_init to set up avatar-gateway in this project."</em> · <a class="text-link" href="https://github.com/EbubeImoh/avatar-gateway/blob/main/docs/mcp.md">Full MCP guide ↗</a></p>
+          </div>
         </div>
       </section>
 

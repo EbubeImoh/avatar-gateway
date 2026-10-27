@@ -1,0 +1,16 @@
+{
+  "name": "@avatar-gateway/cli",
+  "version": "0.2.0",
+  "description": "One-command installer for avatar-gateway: npx avatar-gateway@latest init — detects framework, generates keys, installs starter apartment, wires Avatar.mount.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "avatar-gateway": "dist/cli.js",
+    "create-avatar-gateway": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  }
+}
