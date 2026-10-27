@@ -21,6 +21,7 @@ const configSchema = z.object({
   avatarDid: z.string().startsWith("did:key:").optional(),
   avatarPrivateKeyPem: z.string().includes("PRIVATE KEY").optional(),
   avatarPublicKeyPem: z.string().includes("PUBLIC KEY").optional(),
+  lifeStartedAt: z.string().datetime({ offset: true }).optional(),
   avatarName: z.string().min(1).max(100).optional(),
   aiProviderEnvVar: z.string().regex(/^[A-Z_][A-Z0-9_]*$/).optional(),
   aiProvider: z.enum(["openai", "anthropic", "openai_compatible"]).optional(),

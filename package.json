@@ -10,7 +10,7 @@
     "examples/*"
   ],
   "scripts": {
-    "build": "npm run build --workspace=@avatar-gateway/avatar-runtime && npm run build --workspace=@avatar-gateway/gateway && npm run build --workspace=@avatar-gateway/marketplace && npm run build --workspace=@avatar-gateway/plugin-api && npm run build --workspace=@avatar-gateway/sdk && npm run build --workspace=@avatar-gateway/sdk-web && npm run build --workspace=@avatar-gateway/shubur && npm run build --workspace=@avatar-gateway/starter-apartment && npm run build --workspace=shubur && npm run build --workspace=@avatar-gateway/mcp && npm run build --workspace=demo-site-a && npm run build --workspace=demo-site-b",
+    "build": "npm run build --workspace=@avatar-gateway/avatar-runtime && npm run build --workspace=@avatar-gateway/gateway && npm run build --workspace=@avatar-gateway/marketplace && npm run build --workspace=@avatar-gateway/plugin-api && npm run build --workspace=@avatar-gateway/sdk && npm run build --workspace=@avatar-gateway/sdk-web && npm run build --workspace=@avatar-gateway/shubur && npm run build --workspace=@avatar-gateway/starter-apartment && npm run build --workspace=@shubur/life && npm run build --workspace=shubur && npm run build --workspace=@avatar-gateway/mcp && npm run build --workspace=demo-site-a && npm run build --workspace=demo-site-b",
     "dev": "npm run build && concurrently --names gateway,site-a,site-b --prefix-colors cyan,green,yellow \"node packages/gateway/dist/serve.js\" \"node examples/demo-site-a/dist/index.js\" \"node examples/demo-site-b/dist/index.js\"",
     "test": "vitest run",
     "clean": "rm -rf packages/*/dist examples/*/dist"

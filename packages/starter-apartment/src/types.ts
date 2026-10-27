@@ -84,6 +84,11 @@ export interface DayActivity {
   room?: RoomId;
 }
 
+/** Supplies a complete, validated daily routine from an autonomous life engine. */
+export interface DayActivitySource {
+  getDayActivities(now: Date): DayActivity[];
+}
+
 export type AvatarActivity = "sleeping" | "waking" | "coffee" | "working" | "reading" | "stretching" | "idle" | "walking";
 
 export interface DayCycleConfig {

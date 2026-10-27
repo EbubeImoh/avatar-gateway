@@ -2,11 +2,13 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent } from "react";
-import { APARTMENT_STYLES, buildSceneSvg, localHour, resolveConfig } from "./scene.js";
-import type { ApartmentConfig, DayActivity, DayPeriod, RoomId } from "./types.js";
+import { APARTMENT_STYLES, buildSceneSvg, currentActivity, localHour, resolveConfig } from "./scene.js";
+import type { ApartmentConfig, DayActivity, DayActivitySource, DayPeriod, RoomId } from "./types.js";
 
 export interface ApartmentSceneProps {
   config?: ApartmentConfig;
+  /** Optional autonomous routine source. Its activity plan stays local to this page. */
+  activitySource?: DayActivitySource;
   /** Freeze the scene at a specific time, useful for previews and tests. */
   now?: Date;
   initialRoom?: RoomId;
@@ -40,6 +42,7 @@ function daySegments(activities: DayActivity[]): string {
 
 export function ApartmentScene({
   config = {},
+  activitySource,
   now: nowProp,
   initialRoom,
   onAvatarMount,
@@ -53,6 +56,7 @@ export function ApartmentScene({
     : resolved.layout.startRoom;
   const [selectedRoom, setSelectedRoom] = useState<RoomId>(startRoom);
   const [clock, setClock] = useState<Date>(() => nowProp ?? new Date());
+  const [activities, setActivities] = useState<DayActivity[]>(() => resolved.dayCycle.activities);
   const avatarHost = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -70,15 +74,22 @@ export function ApartmentScene({
   }, [nowProp]);
 
   useEffect(() => {
+    const nextActivities = activitySource?.getDayActivities(clock) ?? resolved.dayCycle.activities;
+    const validated = resolveConfig({ dayCycle: { timezone: resolved.dayCycle.timezone, activities: nextActivities } });
+    setActivities(validated.dayCycle.activities);
+  }, [activitySource, clock, resolved]);
+
+  useEffect(() => {
     const host = avatarHost.current;
     if (!host || !onAvatarMount) return;
     const mounted = onAvatarMount(host);
     return () => mounted?.destroy();
   }, [onAvatarMount]);
 
-  const scene = buildSceneSvg(resolved, clock, selectedRoom);
-  const activity = resolved.dayCycle.enabled
-    ? scene.activity
+  const current = currentActivity(activities, resolved.dayCycle.timezone, clock);
+  const scene = buildSceneSvg(resolved, clock, selectedRoom, activitySource ? current : undefined);
+  const activity = resolved.dayCycle.enabled || activitySource
+    ? current
     : { ...scene.activity, caption: "Taking a quiet moment" };
   const hour = localHour(resolved.dayCycle.timezone, clock);
   const time = new Intl.DateTimeFormat("en", { hour: "numeric", minute: "2-digit", timeZone: resolved.dayCycle.timezone }).format(clock);
@@ -112,7 +123,7 @@ export function ApartmentScene({
         <span>{scene.room.id === (activity.room ?? resolved.layout.startRoom) ? activity.caption : `A quiet ${scene.room.name.toLowerCase()}`}</span>
         <span className="ag-apartment__time">{time} · {resolved.dayCycle.timezone}</span>
       </p>
-      <div className="ag-apartment__day" role="img" aria-label={`Daily routine. Current local hour ${hour}.`} dangerouslySetInnerHTML={{ __html: daySegments(resolved.dayCycle.activities) }} />
+      <div className="ag-apartment__day" role="img" aria-label={`Daily routine. Current local hour ${hour}.`} dangerouslySetInnerHTML={{ __html: daySegments(activities) }} />
       {onAvatarMount ? <div ref={avatarHost} className="ag-apartment__widget" /> : null}
     </div>
   );

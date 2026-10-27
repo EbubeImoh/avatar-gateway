@@ -11,6 +11,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { z } from "zod";
 import {
   toolStatus,
+  toolLifeStatus,
   toolInit,
   toolCreateIdentity,
   toolConnectGateway,
@@ -53,6 +54,8 @@ function registerTextTool<TShape extends z.ZodRawShape>(
 
 function registerTools(server: McpServer, cwd: string): void {
   registerTextTool(server, "shubur_status", "Check Shubur setup, gateway health, profile, and AI provider configuration for this project.", {}, async () => toolStatus(cwd));
+
+  registerTextTool(server, "shubur_life_status", "Read the local agent's current home activity, needs, mood, and skills. This is a deterministic local projection; it makes no gateway request and writes no files.", {}, async () => toolLifeStatus(cwd));
 
   registerTextTool(server, "shubur_init", "Create a secure local Shubur config and install the Starter Apartment. Shubur Cloud is in development; use a configured HTTPS gateway or local self-hosted gateway.", {
     mode: z.enum(["self_hosted", "hosted"]).optional(),

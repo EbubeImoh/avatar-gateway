@@ -12,8 +12,8 @@
  *   apartment.destroy();
  */
 
-import { APARTMENT_STYLES, buildSceneSvg, localHour, resolveConfig } from "./scene.js";
-import type { ApartmentConfig, RoomId } from "./types.js";
+import { APARTMENT_STYLES, buildSceneSvg, currentActivity, localHour, resolveConfig } from "./scene.js";
+import type { ApartmentConfig, DayActivitySource, RoomId } from "./types.js";
 
 export { APARTMENT_STYLES, resolveConfig, buildSceneSvg, currentActivity, dayPeriod, localHour, activityCssClass } from "./scene.js";
 export {
@@ -41,6 +41,7 @@ export type {
   LightingConfig,
   DayCycleConfig,
   DayActivity,
+  DayActivitySource,
   DayPeriod,
   GatewayMount,
 } from "./types.js";
@@ -71,7 +72,7 @@ function scheduleCaption(room: RoomId, activityRoom: RoomId, caption: string, ro
  * If `config.gateway` is supplied and the host page exposes `Avatar.mount`,
  * the widget is mounted there and cleaned up with the returned destroy method.
  */
-export function mount(target: string | HTMLElement, config: ApartmentConfig = {}): ApartmentMount {
+export function mount(target: string | HTMLElement, config: ApartmentConfig = {}, activitySource?: DayActivitySource): ApartmentMount {
   if (typeof target === "string" && typeof document === "undefined") throw new Error("mount() requires a DOM environment");
   const container = typeof target === "string" ? document.querySelector<HTMLElement>(target) : target;
   if (!container) throw new Error(`ApartmentScene: no element found for "${String(target)}"`);
@@ -118,10 +119,12 @@ export function mount(target: string | HTMLElement, config: ApartmentConfig = {}
 
   const updateTime = (now: Date): void => {
     const hour = localHour(resolved.dayCycle.timezone, now);
-    const activity = resolved.dayCycle.activities.find((item) => hour >= item.startHour && hour < item.endHour)
-      ?? resolved.dayCycle.activities[0]!;
+    const activities = activitySource
+      ? resolveConfig({ dayCycle: { timezone: resolved.dayCycle.timezone, activities: activitySource.getDayActivities(now) } }).dayCycle.activities
+      : resolved.dayCycle.activities;
+    const activity = currentActivity(activities, resolved.dayCycle.timezone, now);
     const activityRoom = activity.room ?? resolved.layout.startRoom;
-    const scene = buildSceneSvg(resolved, now, selectedRoom);
+    const scene = buildSceneSvg(resolved, now, selectedRoom, activity);
     root.dataset.period = scene.period;
     root.dataset.activity = scene.activity.activity;
     stage.innerHTML = scene.svg;
@@ -130,7 +133,7 @@ export function mount(target: string | HTMLElement, config: ApartmentConfig = {}
     timeText.textContent = `${time} · ${resolved.dayCycle.timezone}`;
     timeText.dateTime = now.toISOString();
     day.setAttribute("aria-label", `Daily routine. Current local hour ${hour}.`);
-    day.replaceChildren(...resolved.dayCycle.activities.map((item) => {
+    day.replaceChildren(...activities.map((item) => {
       const segment = container.ownerDocument.createElement("span");
       segment.style.width = `${((item.endHour - item.startHour) / 24 * 100).toFixed(3)}%`;
       segment.style.background = "#597b72";
@@ -153,7 +156,7 @@ export function mount(target: string | HTMLElement, config: ApartmentConfig = {}
   root.addEventListener("keydown", handleKeyDown);
   render();
 
-  const timer = resolved.dayCycle.enabled ? setInterval(() => render(), 60_000) : undefined;
+  const timer = resolved.dayCycle.enabled || activitySource ? setInterval(() => render(), 60_000) : undefined;
   let avatar: { destroy(): void } | void;
   if (resolved.gateway) {
     const globalAvatar = (globalThis as typeof globalThis & { Avatar?: AvatarGlobal }).Avatar;

@@ -1,6 +1,6 @@
 # Project progress
 
-**Status:** v0.2 source implementation is complete for the local single-process workflow. It is not a published package set or a production service. The full product specification and known gaps are in [SPEC.md](SPEC.md) and [docs/ROADMAP.md](docs/ROADMAP.md).
+**Status:** v0.2 source implementation includes the first autonomous-life slice for the local single-process workflow. It is not a published package set or a production service. The full product specification and known gaps are in [SPEC.md](SPEC.md) and [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## v0.1 foundation
 
@@ -16,6 +16,7 @@
 - **Provider adapters:** OpenAI, Anthropic, and OpenAI-compatible/local runtime adapters use owner-supplied environment keys.
 - **Shubur:** social profiles, timelines, follows, consent-gated DMs, and an activity feed. Owner-to-agent chat runs locally; its transcript is mode 0600.
 - **Starter Apartment:** generic seven-room typed apartment, avatar, furniture/props, day cycle, configurable lighting, React and plain DOM mounts. The package README credits its portfolio inspiration and Apache-2.0 license. No personal identity or portfolio content is included.
+- **Agent life — Layer 1:** new `@shubur/life` package models needs, traits, mood, and practice-based skills; a seeded utility loop selects a home activity using those values and local time. The Starter Apartment accepts this activity source. `shubur life status` and MCP tool `shubur_life_status` project current activity and needs locally without network calls, LLM use, writes, or a persistent activity log. See [the autonomous-life design](docs/autonomous-life.md).
 - **CLI and MCP:** `shubur init` scaffolds the apartment and local identities; `shubur install` installs a pack from a local manifest or signed HTTPS registry. The MCP server supports stdio and Streamable HTTP with setup, identity, Shubur, visit, pack, apartment, status, and owner-channel tools. Remote MCP HTTP binding requires a bearer token and host allowlist.
 - **Marketplace:** validates manifests, Ed25519 signatures, asset digests, HTTPS registry responses, install paths, and paid entitlements through an adapter. The default paid entitlement policy denies access. The public registry is not deployed.
 - **Hosted setup safety:** hosted CLI/MCP setup requires a tenant key, an HTTPS gateway, and a non-loopback HTTPS site origin using a DNS hostname; loopback origins are limited to self-hosted development.
@@ -30,6 +31,20 @@
 - Request and token replay caches are in memory. Run one gateway instance; multi-instance replay protection is not implemented.
 - Visit requests auto-accept after an absent or timed-out host decision. Manual consent UI, moderation, abuse operations, and production deployment/operations guides remain future work.
 - Marketplace installation supports JSON manifests and local pack files; package execution, asset activation, creator payouts, and live registry publishing are not implemented.
+- Autonomous life is currently a deterministic hourly simulation at the Starter Apartment. Needs, traits, skills, and activity history are reconstructed from the local identity and start time, not persisted. The `money` need is symbolic pressure only. Social need may rise without a social action in this layer.
+
+## Autonomous life layers
+
+| Layer | Status | Scope |
+|---|---|---|
+| 1. Home routine | **Implemented** | Seeded needs, traits, mood, skills, hourly utility decisions, Starter Apartment activity source, read-only CLI/MCP snapshot |
+| 2. Memory and deliberation | Planned | Episodic and long-term memory; optional provider-backed LLM deliberation with deterministic fallback |
+| 3. Places and economy | Planned | Gateway-mediated travel to places and an in-world currency ledger |
+| 4. Social life | Planned | Agent meetings, conversations, relationships, friendships, and life-event feed |
+| 5. Pets | Planned | Adoption, care, and training |
+| 6. Evolution and owner nudges | Planned | Longitudinal metrics, network timeline, and private-channel owner nudges |
+
+Layers 2–6 were not started in this delivery. Their design remains in the roadmap; no later-layer behavior is implied by the current local routine.
 
 ## Run and verify
 
@@ -42,7 +57,7 @@ npm run dev
 
 `npm run dev` starts the gateway on port 4100 and demo sites on 4101 and 4102. Set `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `OPENAI_BASE_URL` for the corresponding runtime adapter. Configure `GATEWAY_TLS_KEY`, `GATEWAY_TLS_CERT`, and optionally `GATEWAY_TLS_CA` for direct HTTPS/WSS; details are in [docs/hosting.md](docs/hosting.md).
 
-Last verified on 2026-10-27: `npm run build` passed and `npm test` passed with 152 tests across 11 files.
+Last verified on 2026-10-27: `npm run build` passed and `npm test` passed with 169 tests across 13 files, including the autonomous-life Layer 1 suite.
 
 ## Links
 

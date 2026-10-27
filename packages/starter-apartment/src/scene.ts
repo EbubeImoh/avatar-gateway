@@ -310,11 +310,11 @@ export interface BuiltScene {
   room: ApartmentRoom;
 }
 
-export function buildSceneSvg(cfg: ResolvedApartmentConfig, now = new Date(), selectedRoom?: RoomId): BuiltScene {
+export function buildSceneSvg(cfg: ResolvedApartmentConfig, now = new Date(), selectedRoom?: RoomId, activityOverride?: DayActivity): BuiltScene {
   const period = dayPeriod(cfg.dayCycle.timezone, now);
-  const activity = cfg.dayCycle.enabled
+  const activity = activityOverride ?? (cfg.dayCycle.enabled
     ? currentActivity(cfg.dayCycle.activities, cfg.dayCycle.timezone, now)
-    : { ...cfg.dayCycle.activities[0]!, activity: "idle" as const, caption: "Having a quiet moment" };
+    : { ...cfg.dayCycle.activities[0]!, activity: "idle" as const, caption: "Having a quiet moment" });
   const activityRoom = activity.room && cfg.layout.rooms.some((room) => room.id === activity.room)
     ? activity.room
     : cfg.layout.startRoom;

@@ -33,11 +33,21 @@ export interface ScaffoldFiles {
   instructions: string[];
 }
 
+export interface LifeScaffoldConfig {
+  agentId: string;
+  startedAt: string;
+}
+
 /**
  * Returns the scaffold files for a given framework.
  * Generates minimal, working code that mounts the apartment + Avatar.mount.
  */
-export function buildScaffold(framework: DetectedFramework, avatarName: string, backendPath: string): ScaffoldFiles {
+export function buildScaffold(
+  framework: DetectedFramework,
+  avatarName: string,
+  backendPath: string,
+  life: LifeScaffoldConfig = { agentId: `local:${avatarName}`, startedAt: new Date().toISOString() },
+): ScaffoldFiles {
   const common = {
     packages: [
       "@avatar-gateway/sdk",
@@ -45,6 +55,7 @@ export function buildScaffold(framework: DetectedFramework, avatarName: string, 
       "@avatar-gateway/gateway",
       "@avatar-gateway/avatar-runtime",
       "@avatar-gateway/shubur",
+      "@shubur/life",
     ],
     instructions: [
       `Set your provider key in the environment (see .env.example).`,
@@ -54,7 +65,7 @@ export function buildScaffold(framework: DetectedFramework, avatarName: string, 
   };
   const packages = framework === "plain-html" ? [...common.packages, "vite"] : common.packages;
 
-  const quickstart = `# Shubur quick setup\n\nHave you ever wondered what your agent would be doing if it had a life of its own?\n\nThis project includes a generic Starter Apartment, a local avatar identity, and a Shubur profile draft. The private keys are stored in .avatar-gateway/config.json.\n\nSet the provider key in your shell (for example, OPENAI_API_KEY) before starting your app. The key is read from the environment and is not written to project files.\n\nSelf-hosted gateway: run npm run shubur:gateway. Shubur Cloud is coming soon; a configured HTTPS gateway can be selected with the CLI.\n`;
+  const quickstart = `# Shubur quick setup\n\nHave you ever wondered what your agent would be doing if it had a life of its own?\n\nThis project includes a generic Starter Apartment, an emergent needs-driven home routine, a local avatar identity, and a Shubur profile draft. The private keys are stored in .avatar-gateway/config.json.\n\nSet the provider key in your shell (for example, OPENAI_API_KEY) before starting your app. The key is read from the environment and is not written to project files.\n\nUse \`npx shubur@latest life status\` to inspect local activity, needs, mood, and skills. The life view uses no LLM or network request.\n\nSelf-hosted gateway: run npm run shubur:gateway. Shubur Cloud is coming soon; a configured HTTPS gateway can be selected with the CLI.\n`;
 
   switch (framework) {
     case "nextjs":
@@ -63,17 +74,19 @@ export function buildScaffold(framework: DetectedFramework, avatarName: string, 
         packages,
         files: {
           "app/avatar/page.tsx": `"use client";
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { Avatar } from "@avatar-gateway/sdk";
+import { createLifeSimulation } from "@shubur/life";
 import { ApartmentScene } from "@avatar-gateway/starter-apartment/react";
 export default function AvatarPage() {
   const avatarHost = useRef<HTMLDivElement>(null);
+  const life = useMemo(() => createLifeSimulation({ agentId: ${JSON.stringify(life.agentId)}, seed: ${JSON.stringify(life.agentId)}, startedAt: new Date(${JSON.stringify(life.startedAt)}) }), []);
   useEffect(() => {
     if (!avatarHost.current) return;
     const mounted = Avatar.mount(avatarHost.current, { backend: ${JSON.stringify(backendPath)}, name: ${JSON.stringify(avatarName)} });
     return () => mounted.destroy();
   }, []);
-  return <main><ApartmentScene config={{ avatar: { name: ${JSON.stringify(avatarName)} } }} /><div ref={avatarHost} /></main>;
+  return <main><ApartmentScene config={{ avatar: { name: ${JSON.stringify(avatarName)} } }} activitySource={life} /><div ref={avatarHost} /></main>;
 }`,
           "SHUBUR_QUICKSTART.md": quickstart,
         },
@@ -86,16 +99,18 @@ export default function AvatarPage() {
         packages,
         files: {
           "src/AvatarHome.tsx": `import { ApartmentScene } from "@avatar-gateway/starter-apartment/react";
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { Avatar } from "@avatar-gateway/sdk";
+import { createLifeSimulation } from "@shubur/life";
 export function AvatarHome() {
   const avatarHost = useRef<HTMLDivElement>(null);
+  const life = useMemo(() => createLifeSimulation({ agentId: ${JSON.stringify(life.agentId)}, seed: ${JSON.stringify(life.agentId)}, startedAt: new Date(${JSON.stringify(life.startedAt)}) }), []);
   useEffect(() => {
     if (!avatarHost.current) return;
     const mounted = Avatar.mount(avatarHost.current, { backend: ${JSON.stringify(backendPath)}, name: ${JSON.stringify(avatarName)} });
     return () => mounted.destroy();
   }, []);
-  return <main><ApartmentScene config={{ avatar: { name: ${JSON.stringify(avatarName)} } }} /><div ref={avatarHost} /></main>;
+  return <main><ApartmentScene config={{ avatar: { name: ${JSON.stringify(avatarName)} } }} activitySource={life} /><div ref={avatarHost} /></main>;
 }`,
           "SHUBUR_QUICKSTART.md": quickstart,
         },
@@ -116,8 +131,10 @@ export function AvatarHome() {
   <div id="avatar"></div>
   <script type="module">
     import { mount } from "@avatar-gateway/starter-apartment";
+    import { createLifeSimulation } from "@shubur/life";
     import { Avatar } from "@avatar-gateway/sdk";
-    mount("#apartment", { avatar: { name: ${JSON.stringify(avatarName)} } });
+    const life = createLifeSimulation({ agentId: ${JSON.stringify(life.agentId)}, seed: ${JSON.stringify(life.agentId)}, startedAt: new Date(${JSON.stringify(life.startedAt)}) });
+    mount("#apartment", { avatar: { name: ${JSON.stringify(avatarName)} } }, life);
     Avatar.mount("#avatar", { backend: ${JSON.stringify(backendPath)}, name: ${JSON.stringify(avatarName)} });
   </script>
 </body>

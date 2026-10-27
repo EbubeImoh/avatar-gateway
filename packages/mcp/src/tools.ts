@@ -11,7 +11,7 @@ import type { LLMProvider } from "@avatar-gateway/avatar-runtime";
 import { generateIdentity, signGatewayRequest } from "@avatar-gateway/gateway";
 import { resolveConfig } from "@avatar-gateway/starter-apartment";
 import type { ApartmentConfig } from "@avatar-gateway/starter-apartment";
-import { runInit } from "shubur";
+import { readLifeStatus, runInit } from "shubur";
 import type { AiProvider, GatewayMode } from "shubur";
 import { readConfig, mergeConfig, validateGatewayUrl, validateSiteOrigin } from "./config.js";
 import type { AvatarGatewayConfig } from "./config.js";
@@ -72,6 +72,11 @@ export async function toolStatus(cwd: string): Promise<string> {
   }
 
   return lines.join("\n");
+}
+
+/** Read the current local activity, needs, mood, and skills without writing state or contacting the gateway. */
+export async function toolLifeStatus(cwd: string): Promise<string> {
+  return readLifeStatus(cwd);
 }
 
 // ── Tool: init ─────────────────────────────────────────────────────────────

@@ -43,6 +43,7 @@ describe("buildScaffold", () => {
       const scaffold = buildScaffold(fw, "TestBot", "/avatar-gateway");
       expect(scaffold.packages).toContain("@avatar-gateway/sdk");
       expect(scaffold.packages).toContain("@avatar-gateway/starter-apartment");
+      expect(scaffold.packages).toContain("@shubur/life");
       expect(scaffold.files).toBeTruthy();
     }
   });
@@ -56,6 +57,8 @@ describe("buildScaffold", () => {
     const scaffold = buildScaffold("plain-html", "TestBot", "/avatar-gateway");
     expect(scaffold.files["index.html"]).toContain("Avatar.mount");
     expect(scaffold.files["index.html"]).toContain('from "@avatar-gateway/starter-apartment"');
+    expect(scaffold.files["index.html"]).toContain('from "@shubur/life"');
+    expect(scaffold.files["index.html"]).toContain('mount("#apartment", { avatar: { name: "TestBot" } }, life)');
     expect(scaffold.packages).toContain("vite");
   });
 
@@ -84,12 +87,16 @@ describe("runInit --yes", () => {
     expect(cfg.avatarName).toBe("TestBot");
     expect(cfg.sitePrivateKeyPem).toContain("PRIVATE KEY");
     expect(cfg.avatarDid).toBe(result.avatarDid);
+    expect(cfg.lifeStartedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(cfg.shuburHandle).toContain("@localhost");
     expect(result.profilePublished).toBe(false);
     const configStat = await stat(join(tmpDir, ".avatar-gateway/config.json"));
     expect(configStat.mode & 0o777).toBe(0o600);
     expect(await readFile(join(tmpDir, ".avatar-gateway/profile.json"), "utf8")).toContain("TestBot");
     expect(await readFile(join(tmpDir, ".gitignore"), "utf8")).toContain(".avatar-gateway/");
+    const generated = await readFile(join(tmpDir, "index.html"), "utf8");
+    expect(generated).toContain("createLifeSimulation");
+    expect(generated).toContain('mount("#apartment", { avatar: { name: "TestBot" } }, life)');
     expect(await readFile(join(tmpDir, ".env.example"), "utf8")).toContain("OPENAI_API_KEY=");
     await rm(tmpDir, { recursive: true, force: true });
   });

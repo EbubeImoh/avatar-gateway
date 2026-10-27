@@ -7,7 +7,7 @@ import {
 } from "./config.js";
 import {
   toolStatus, toolInit, toolCreateIdentity,
-  toolCustomiseApartment, toolOwnerChat, toolReadOwnerChannel, toolReadDms, toolSendDm,
+  toolCustomiseApartment, toolOwnerChat, toolReadOwnerChannel, toolReadDms, toolSendDm, toolLifeStatus,
 } from "./tools.js";
 import { MockProvider } from "@avatar-gateway/avatar-runtime";
 import { generateIdentity } from "@avatar-gateway/gateway";
@@ -75,6 +75,26 @@ describe("toolStatus", () => {
     const out = await toolStatus(tmpDir);
     expect(out).toContain("https://my-gateway:4100");
     await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("reads local life status without contacting the configured gateway", async () => {
+    await writeConfig({
+      gatewayUrl: "http://localhost:4100",
+      mode: "self_hosted",
+      avatarDid: "did:key:local-agent",
+      lifeStartedAt: "2026-10-27T09:00:00.000Z",
+    }, tmpDir);
+    const configPath = join(tmpDir, ".avatar-gateway/config.json");
+    const before = await import("node:fs/promises").then(({ readFile }) => readFile(configPath, "utf8"));
+    const out = await toolLifeStatus(tmpDir);
+    expect(out).toContain("Current activity:");
+    expect(out).toContain("Needs (0 = satisfied, 100 = urgent):");
+    expect(out).not.toContain("Gateway health");
+    expect(await import("node:fs/promises").then(({ readFile }) => readFile(configPath, "utf8"))).toBe(before);
+  });
+
+  it("gives a setup hint when there is no local life config", async () => {
+    expect(await toolLifeStatus(tmpDir)).toContain("shubur init");
   });
 });
 
@@ -237,6 +257,7 @@ describe("Shubur MCP Streamable HTTP transport", () => {
       const result = await listed.json() as { result: { tools: Array<{ name: string }> } };
       const names = result.result.tools.map((tool) => tool.name);
       expect(names).toContain("shubur_init");
+      expect(names).toContain("shubur_life_status");
       expect(names).toContain("shubur_read_dms");
       expect(names).toContain("shubur_read_owner_channel");
 

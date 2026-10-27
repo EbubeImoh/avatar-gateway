@@ -9,6 +9,7 @@
 
 import { formatInitSummary, runInit } from "./init.js";
 import { runInstall } from "./install.js";
+import { readLifeStatus } from "./life.js";
 import type { AiProvider } from "./init.js";
 
 const args = process.argv.slice(2);
@@ -23,7 +24,14 @@ function hasFlag(name: string): boolean {
   return args.includes(name);
 }
 
-if (command === "install") {
+if (command === "life") {
+  const subcommand = args[1] ?? "status";
+  if (subcommand !== "status") {
+    process.stderr.write("Usage: shubur life [status]\n");
+    process.exit(1);
+  }
+  process.stdout.write(`${await readLifeStatus(process.cwd())}\n`);
+} else if (command === "install") {
   const packReference = args[1];
   if (!packReference) {
     process.stderr.write("Usage: shubur install <pack-id|https-url|local-manifest.json> [--registry <https-url>]\n");
@@ -43,6 +51,6 @@ if (command === "install") {
   const result = await runInit({ yes: isYes, mode, gatewayUrl, avatarName, aiProvider, aiProviderEnvVar, tenantApiKey, siteOrigin });
   if (isYes) process.stdout.write(`${formatInitSummary(result)}\n`);
 } else {
-  process.stderr.write(`Unknown command: ${command}\nUsage: shubur init [--yes] | shubur install <pack-id|https-url|local-manifest.json>\n`);
+  process.stderr.write(`Unknown command: ${command}\nUsage: shubur init [--yes] | shubur life [status] | shubur install <pack-id|https-url|local-manifest.json>\n`);
   process.exit(1);
 }

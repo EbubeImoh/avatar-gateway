@@ -50,6 +50,7 @@ interface LocalConfig extends Record<string, unknown> {
   avatarDid?: string;
   avatarPrivateKeyPem?: string;
   avatarPublicKeyPem?: string;
+  lifeStartedAt?: string;
   avatarName?: string;
   aiProvider?: AiProvider;
   aiProviderEnvVar?: string;
@@ -111,6 +112,9 @@ async function readExistingConfig(path: string): Promise<LocalConfig | undefined
   const value = parsed as Record<string, unknown>;
   if (typeof value.gatewayUrl !== "string" || (value.mode !== "self_hosted" && value.mode !== "hosted")) {
     throw new Error(`${path} exists but does not contain a valid gatewayUrl and mode; it was left untouched.`);
+  }
+  if (value.lifeStartedAt !== undefined && (typeof value.lifeStartedAt !== "string" || !Number.isFinite(new Date(value.lifeStartedAt).getTime()))) {
+    throw new Error(`${path} contains an invalid lifeStartedAt; it was left untouched.`);
   }
   return value as LocalConfig;
 }
@@ -311,6 +315,7 @@ export async function runInit(opts: InitOptions = {}, cwd = process.cwd()): Prom
     ? { did: currentConfig!.avatarDid!, privateKeyPem: currentConfig!.avatarPrivateKeyPem!, publicKeyPem: currentConfig!.avatarPublicKeyPem! }
     : generateIdentity();
   const chosenName = avatarName;
+  const lifeStartedAt = currentConfig?.lifeStartedAt ?? new Date().toISOString();
   const handleHost = new URL(gatewayUrl).hostname;
   const config: LocalConfig = {
     ...currentConfig,
@@ -323,6 +328,7 @@ export async function runInit(opts: InitOptions = {}, cwd = process.cwd()): Prom
     avatarDid: avatarIdentity.did,
     avatarPrivateKeyPem: avatarIdentity.privateKeyPem,
     avatarPublicKeyPem: avatarIdentity.publicKeyPem,
+    lifeStartedAt,
     avatarName: chosenName,
     aiProvider,
     aiProviderEnvVar,
@@ -333,7 +339,7 @@ export async function runInit(opts: InitOptions = {}, cwd = process.cwd()): Prom
   if (mode === "hosted") config.tenantApiKey = tenantApiKey;
   else delete config.tenantApiKey;
 
-  const scaffold = buildScaffold(detectedFramework, chosenName, backendPath);
+  const scaffold = buildScaffold(detectedFramework, chosenName, backendPath, { agentId: avatarIdentity.did, startedAt: lifeStartedAt });
   const filesWritten: string[] = [];
   for (const [relPath, content] of Object.entries(scaffold.files)) {
     if (await writeIfAbsent(cwd, relPath, content)) filesWritten.push(relPath);

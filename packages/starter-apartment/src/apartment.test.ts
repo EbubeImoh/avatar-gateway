@@ -249,4 +249,28 @@ describe("defaults", () => {
     expect(host.childElementCount).toBe(0);
     dom.window.close();
   });
+
+  it("uses a validated life activity source to drive the current apartment scene", () => {
+    const dom = new JSDOM("<!doctype html><html><head></head><body><div id=home></div></body></html>");
+    const host = dom.window.document.querySelector<HTMLElement>("#home")!;
+    const source = {
+      getDayActivities: () => [{ startHour: 0, endHour: 24, activity: "working" as const, caption: "A needs-driven studio session", room: "studio" as const }],
+    };
+    const apartment = mount(host, { dayCycle: { timezone: "UTC" } }, source);
+    expect(host.querySelector(".ag-apartment")?.getAttribute("data-activity")).toBe("working");
+    expect(host.querySelector(".ag-apartment__stage svg")?.getAttribute("aria-label")).toContain("A needs-driven studio session");
+    expect(host.querySelectorAll(".ag-apartment__day span")).toHaveLength(1);
+    apartment.destroy();
+    dom.window.close();
+  });
+
+  it("rejects an invalid activity source before accepting it as a day cycle", () => {
+    const dom = new JSDOM("<!doctype html><html><head></head><body><div id=home></div></body></html>");
+    const host = dom.window.document.querySelector<HTMLElement>("#home")!;
+    const source = {
+      getDayActivities: () => [{ startHour: 0, endHour: 23, activity: "working" as const, caption: "Incomplete day", room: "studio" as const }],
+    };
+    expect(() => mount(host, {}, source)).toThrow("cover the entire 24-hour day");
+    dom.window.close();
+  });
 });
