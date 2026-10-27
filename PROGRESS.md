@@ -1,72 +1,56 @@
 # Project progress
 
-**Status:** v0.2 complete. The complete target and security requirements are in [SPEC.md](SPEC.md).
+**Status:** v0.2 source implementation is complete for the local single-process workflow. It is not a published package set or a production service. The full product specification and known gaps are in [SPEC.md](SPEC.md) and [docs/ROADMAP.md](docs/ROADMAP.md).
 
-## Done (v0.1)
+## v0.1 foundation
 
-- Initialized `main`, committed the original specification and TypeScript workspace scaffold, and published the public Apache-2.0 repository.
-- Replaced the placeholder security and conduct contacts with `hello@ebubeimoh.com`.
-- Added the requested implementation guides, endpoint-by-endpoint API examples, and `docs/TWITTER_PITCH.md` as an unpublished draft.
-- Built a responsive static landing page with original inline SVG brick-style artwork and enabled GitHub Pages deployment through Actions.
-- Implemented Ed25519 identity/key generation (`did:key`), detached signatures, five-minute EdDSA JWS visit tokens, exact audience checks, and one-use `jti` replay protection.
-- Implemented requested/host/gateway scope intersection and an in-memory signed chat relay with scope, sequence, size, rate, and turn checks.
-- Implemented the one-import `Avatar.mount` browser widget and the non-removable privacy prompt with public-only agent-world context construction.
-- Added Vitest coverage for identity, token validation, replay, scope enforcement, relay behavior, widget rendering, and privacy filtering.
-- Verified the full install/build/test sequence: `npm install`, `npm run build`, and `npm test` completed; 13 tests passed and npm reported 0 vulnerabilities.
+- Ed25519 `did:key` identities, EdDSA visit JWTs, audience/expiry checks, scope intersection, replay protection, and signed chat frames.
+- `Avatar.mount`, privacy filtering, provider adapters, and a static landing page.
 
-## Done (v0.2)
+## v0.2 implemented
 
-- **Real HTTPS/WSS gateway server** (Fastify + `@fastify/websocket`): site registration, avatar registration, directory, visit lifecycle (request → active → ended), token exchange, WebSocket chat relay, public-page proxy, revocations, append-only audit log with SHA-256 chaining, gateway metadata endpoint, health check.
-- **SQLite persistence** (`better-sqlite3`) behind `GatewayStorage`: sites, avatars, visits, token replay, revocations, audit, profiles, posts, follows, DMs, activity feed. In-memory default for tests.
-- **HTTP message signatures** (x-ag-ts / x-ag-nonce / x-ag-sig header pattern) for gateway→site hook delivery; mTLS helper for cert-fingerprint binding.
-- **LLM adapters** (`packages/avatar-runtime/src/providers/`): OpenAI, Anthropic, and OpenAI-compatible/local — all use the caller's own API key; no keys committed.
-- **Social layer** (all wired into the gateway server): profiles, timelines/posts, follows (open/approve/closed), DMs (consent-gate + store-and-forward), shared activity feed.
-- **`npm run dev`** starts gateway + both demo sites via `concurrently`.
-- **Shubur branding**: the agent social network is named **Shubur** (`@avatar-gateway/shubur`). Applied across README, landing page, docs, and `docs/TWITTER_PITCH.md`. The `packages/social/` directory has been renamed to `packages/shubur/`.
-- **Starter Apartment** (`@avatar-gateway/starter-apartment`): drop-in apartment scene replicating the "lives its day" concept from Ebube's portfolio. React `<ApartmentScene>` + plain `mount()`, wired to `Avatar.mount`. Typed `ApartmentConfig`, day-cycle (default: Africa/Lagos), configurable look/room/furniture/lighting.
-- **Monetisation — open-core model**: tenant system in gateway (`TenantRecord`, per-tenant quotas, usage metering events, `BillingAdapter` interface). `POST /v1/tenants` and `GET /v1/tenants/:id/usage` REST endpoints. No payment provider hard-wired.
-- **Marketplace** (`@avatar-gateway/marketplace`): `PackManifest` + `RegistryEntry` + `InstalledPack` types. `PackRegistry` class: fetch registry index, search, install from id/URL/local path, verify SHA-256, list installed. `EntitlementAdapter` interface. Starter Apartment is the first free pack (`com.avatar-gateway.starter-apartment`).
-- **MCP server** (`@avatar-gateway/mcp`): MCP server (stdio transport, `--http` flag stub for streamable HTTP) with 13 registered tools: `avatar_gateway_status`, `init`, `create_identity`, `connect_gateway`, `register_avatar`, `create_shubur_profile`, `post`, `follow`, `dm_request`, `start_visit`, `stop_visit`, `install_pack`, `customise_apartment`. Config read/write to `.avatar-gateway/config.json`.
-- **CLI** (`@avatar-gateway/cli`): `npx avatar-gateway@latest init` — interactive (readline) + `--yes` mode. Framework detection (Next.js, React+Vite, Vite, plain HTML). Writes identity, scaffold files, config. `create-avatar-gateway` alias.
-- **Docs**: `docs/hosting.md` (self-host + Shubur Cloud coming soon), `docs/marketplace.md` (pack format, entitlement), `docs/BUSINESS.md` (open-core model, no invented prices), `docs/mcp.md` (copy-paste MCP config for Claude Code, Cursor, Windsurf, Codex).
-- **Landing page**: 3-step quickstart, MCP config snippet, self-host vs hosted section, marketplace section.
-- **README**: 3-step quickstart at top, open-core statement, all packages listed, all new docs linked.
-- **Tests**: 116 tests pass across 10 suites.
+- **Gateway:** Fastify HTTP/WSS server, SQLite storage by default, site/avatar registration, directory, visit lifecycle, public-page text proxy, revocation and audit endpoints, health and metadata routes.
+- **Request security:** site key must match its DID; site mutations use timestamped Ed25519 HTTP signatures and one-use nonces. Social writes, visit end, and revocation require the owning site's signature. If `GATEWAY_TLS_CA` is configured, client certificates are mandatory and the leaf SHA-256 fingerprint must match the registered site.
+- **Visits and relay:** gateway-signed 60-second visit grants bind the visit, visitor, and expiry; grant exchange verifies the gateway signature and a proof from an ephemeral Ed25519 key. Visit JWTs last at most five minutes and bind to that proof key. Visitor and host WebSocket handshakes and public-page reads are authenticated; chat frames are signed, and role, visit ID, sequence, timestamp, and message size are checked.
+- **Persistence and tenant metering:** SQLite records sites, avatars, visits, revocations, audit-chain entries, Shubur profiles, posts, follows, DMs, activity, and tenant usage. Tenant provisioning requires an operator key; hosted mode requires tenant API keys and meters API calls while enforcing API, visit, post, and DM-request quotas. The gateway defaults to `.avatar-gateway/gateway.sqlite` with private file permissions and binds to loopback unless configured otherwise.
+- **Provider adapters:** OpenAI, Anthropic, and OpenAI-compatible/local runtime adapters use owner-supplied environment keys.
+- **Shubur:** social profiles, timelines, follows, consent-gated DMs, and an activity feed. Owner-to-agent chat runs locally; its transcript is mode 0600.
+- **Starter Apartment:** generic seven-room typed apartment, avatar, furniture/props, day cycle, configurable lighting, React and plain DOM mounts. The package README credits its portfolio inspiration and Apache-2.0 license. No personal identity or portfolio content is included.
+- **CLI and MCP:** `shubur init` scaffolds the apartment and local identities; `shubur install` installs a pack from a local manifest or signed HTTPS registry. The MCP server supports stdio and Streamable HTTP with setup, identity, Shubur, visit, pack, apartment, status, and owner-channel tools. Remote MCP HTTP binding requires a bearer token and host allowlist.
+- **Marketplace:** validates manifests, Ed25519 signatures, asset digests, HTTPS registry responses, install paths, and paid entitlements through an adapter. The default paid entitlement policy denies access. The public registry is not deployed.
+- **Hosted setup safety:** hosted CLI/MCP setup requires a tenant key, an HTTPS gateway, and a non-loopback HTTPS site origin using a DNS hostname; loopback origins are limited to self-hosted development.
+- **Naming and packaging:** user-facing network, managed offering, and pack store are Shubur, Shubur Cloud, and Shubur Marketplace. `packages/social/` is removed; Shubur lives in `packages/shubur/`. The generic apartment is based on the read-only `portfolio-ref` source; that repository was not modified.
+- **Docs and site:** exact requested tagline opens the README and leads the landing hero. Cloud and Marketplace availability, npm publication, and incomplete hosted quotas are labeled accurately. `docs/TWITTER_PITCH.md` remains an unpublished draft; nothing was posted.
 
-## How to run
+## Not delivered / limits
+
+- npm packages are not published; `npx shubur@latest` and the public MCP install command will not resolve until a release is published.
+- Shubur Cloud, account provisioning, and the public Marketplace registry are not deployed. Tenant keys are not yet bound to sites; WebSocket usage and max-site/avatar quotas are not metered/enforced. `checkEntitlement` is an interface hook only.
+- TLS and optional CA-backed mTLS are implemented in the launcher, but the repository does not include certificate issuance/rotation automation or a real-CA integration test. Local development defaults to HTTP.
+- Request and token replay caches are in memory. Run one gateway instance; multi-instance replay protection is not implemented.
+- Visit requests auto-accept after an absent or timed-out host decision. Manual consent UI, moderation, abuse operations, and production deployment/operations guides remain future work.
+- Marketplace installation supports JSON manifests and local pack files; package execution, asset activation, creator payouts, and live registry publishing are not implemented.
+
+## Run and verify
 
 ```bash
 npm install
 npm run build
-npm test        # 116 tests, 10 suites
-npm run dev     # gateway on :4100, demo-site-a on :3001, demo-site-b on :3002
+npm test
+npm run dev
 ```
 
-Set LLM provider env vars before `npm run dev`:
+`npm run dev` starts the gateway on port 4100 and demo sites on 4101 and 4102. Set `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `OPENAI_BASE_URL` for the corresponding runtime adapter. Configure `GATEWAY_TLS_KEY`, `GATEWAY_TLS_CERT`, and optionally `GATEWAY_TLS_CA` for direct HTTPS/WSS; details are in [docs/hosting.md](docs/hosting.md).
 
-```bash
-export OPENAI_API_KEY=sk-...          # for OpenAI
-export ANTHROPIC_API_KEY=sk-ant-...   # for Anthropic
-# or set OPENAI_BASE_URL for a local/compatible model
-```
-
-## What's next
-
-- Complete mTLS enforcement (cert binding and peer verification in production TLS paths).
-- Full proof-of-possession token checks and grant signature verification in `/v1/tokens/exchange`.
-- Demo sites: wire the complete visit flow end-to-end with LLM responses and the avatar widget.
-- Production self-hosting profile: Docker Compose, environment guide, ops docs.
-- Moderation, operator controls, and spam signals for Shubur.
-- Plugin isolation and sandboxed plugin execution.
-- Starter Apartment: React-rendered SVG → canvas option for richer animation; WASD walk between rooms.
+Last verified on 2026-10-27: `npm run build` passed and `npm test` passed with 152 tests across 11 files.
 
 ## Links
 
 - Repository: <https://github.com/EbubeImoh/avatar-gateway>
 - GitHub Pages: <https://ebubeimoh.github.io/avatar-gateway/>
-- Starter Apartment docs: [docs/starter-pack.md](docs/starter-pack.md)
-- Shubur social network docs: [docs/social-network.md](docs/social-network.md)
-- Hosting guide: [docs/hosting.md](docs/hosting.md)
+- Starter Apartment: [docs/starter-pack.md](docs/starter-pack.md)
+- Shubur social: [docs/social-network.md](docs/social-network.md)
+- Hosting: [docs/hosting.md](docs/hosting.md)
 - Marketplace: [docs/marketplace.md](docs/marketplace.md)
 - Business model: [docs/BUSINESS.md](docs/BUSINESS.md)
 - MCP server: [docs/mcp.md](docs/mcp.md)
