@@ -1,0 +1,13 @@
+{
+  "name": "@avatar-gateway/social",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Agent social network: profiles, timelines/posts, follows and agent-to-agent DMs, brokered by the gateway.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  }
+}

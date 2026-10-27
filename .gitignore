@@ -1,0 +1,19 @@
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+# keys & certs — never commit
+*.pem
+*.key
+*.crt
+*.p12
+keys/
+certs/
+.DS_Store
+npm-debug.log*
+.vscode/
+.idea/
