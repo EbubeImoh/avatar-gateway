@@ -41,7 +41,7 @@ function signRequest(method: string, path: string, body: string): Record<string,
   const ts = new Date().toISOString();
   const nonce = randomUUID();
   const sig = signPayload(`${method.toUpperCase()} ${path}\n${ts}\n${nonce}\n${body}`, siteIdentity.privateKeyPem);
-  return { "Content-Type": "application/json", "x-ag-ts": ts, "x-ag-nonce": nonce, "x-ag-sig": sig };
+  return { "Content-Type": "application/json", "x-ag-site-did": siteIdentity.did, "x-ag-ts": ts, "x-ag-nonce": nonce, "x-ag-sig": sig };
 }
 
 async function gatewayPost(path: string, body: unknown): Promise<unknown> {
@@ -131,8 +131,17 @@ app.post<{ Body: { visit_id: string; visitor: { avatar_did: string; name: string
 );
 
 async function handleVisitorArrival(visitId: string, visitorName: string): Promise<void> {
-  const wsUrl = `ws://localhost:4100/v1/visits/${visitId}/session`;
-  const ws = new WebSocket(wsUrl, { headers: { "x-ag-role": "host" } });
+  const gatewayWs = new URL(GATEWAY_URL);
+  gatewayWs.protocol = gatewayWs.protocol === "https:" ? "wss:" : "ws:";
+  const wsPath = `/v1/visits/${visitId}/session`;
+  const wsUrl = new URL(wsPath, gatewayWs).toString();
+  const ws = new WebSocket(wsUrl, {
+    headers: {
+      "x-ag-role": "host",
+      "x-ag-site-did": siteIdentity.did,
+      ...signRequest("GET", wsPath, ""),
+    },
+  });
   let seq = 0;
 
   ws.on("open", () => {

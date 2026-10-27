@@ -97,11 +97,17 @@ describe("GatewayStorage (SQLite in-memory)", () => {
   });
 
   it("manages DM threads and messages", () => {
-    const thread = storage.findOrCreateDmThread("did:key:zA", "did:key:zB");
+    const thread = storage.findOrCreateDmThread("did:key:zA", "did:key:zB", "Hello");
     expect(thread.threadId).toMatch(/^dmt_/);
+    expect(thread.status).toBe("pending");
+    expect(thread.intro).toBe("Hello");
     // Same participants return same thread
     const thread2 = storage.findOrCreateDmThread("did:key:zB", "did:key:zA");
     expect(thread2.threadId).toBe(thread.threadId);
+    expect(storage.listDmThreads("did:key:zA")).toHaveLength(1);
+    expect(storage.getDmThread(thread.threadId)?.participant2).toBe("did:key:zB");
+    storage.setDmThreadStatus(thread.threadId, "accepted");
+    expect(storage.getDmThread(thread.threadId)?.status).toBe("accepted");
 
     storage.addDmMessage({ messageId: "dmm_1", threadId: thread.threadId, from: "did:key:zA", text: "Hi!", seq: 1, createdAt: new Date().toISOString(), signature: "" });
     const msgs = storage.getDmMessages(thread.threadId);

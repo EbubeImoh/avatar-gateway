@@ -92,6 +92,8 @@ export interface DmThreadRecord {
   threadId: string;
   participant1: string;
   participant2: string;
+  status: "pending" | "accepted" | "rejected";
+  intro: string;
   createdAt: string;
 }
 
@@ -271,6 +273,8 @@ export class GatewayStorage {
         thread_id TEXT PRIMARY KEY,
         participant1 TEXT NOT NULL,
         participant2 TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        intro TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL
       );
 
@@ -313,6 +317,16 @@ export class GatewayStorage {
         metadata TEXT NOT NULL DEFAULT '{}'
       );
     `);
+
+    const dmThreadColumns = new Set(
+      (this.db.pragma("table_info(dm_threads)") as Array<{ name: string }>).map((column) => column.name),
+    );
+    if (!dmThreadColumns.has("status")) {
+      this.db.exec("ALTER TABLE dm_threads ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'");
+    }
+    if (!dmThreadColumns.has("intro")) {
+      this.db.exec("ALTER TABLE dm_threads ADD COLUMN intro TEXT NOT NULL DEFAULT ''");
+    }
 
     // Load chain head from last audit event
     const last = this.db.prepare<[], { hash: string }>("SELECT hash FROM audit_events ORDER BY ts DESC LIMIT 1").get();
@@ -437,6 +451,13 @@ export class GatewayStorage {
   updateVisitStatus(visitId: string, status: VisitRecord["status"], reason?: string, endedAt?: string): void {
     this.db.prepare("UPDATE visits SET status = ?, reason = ?, ended_at = ? WHERE visit_id = ?")
       .run(status, reason ?? null, endedAt ?? null, visitId);
+  }
+
+  countVisitsSince(visitorAvatarDid: string, since: string): number {
+    const row = this.db.prepare<[string, string], { count: number }>(
+      "SELECT COUNT(*) AS count FROM visits WHERE visitor_avatar_did = ? AND created_at >= ?"
+    ).get(visitorAvatarDid, since);
+    return row?.count ?? 0;
   }
 
   private rowToVisit(row: Record<string, unknown>): VisitRecord {
@@ -615,6 +636,18 @@ export class GatewayStorage {
     return { followId: row.follow_id as string, follower: row.follower as string, followee: row.followee as string, status: row.status as FollowRecord["status"], createdAt: row.created_at as string };
   }
 
+  getFollowById(followId: string): FollowRecord | undefined {
+    const row = this.db.prepare<[string], Record<string, unknown>>("SELECT * FROM follows WHERE follow_id = ?").get(followId);
+    if (!row) return undefined;
+    return {
+      followId: row.follow_id as string,
+      follower: row.follower as string,
+      followee: row.followee as string,
+      status: row.status as FollowRecord["status"],
+      createdAt: row.created_at as string,
+    };
+  }
+
   updateFollowStatus(followId: string, status: FollowRecord["status"]): void {
     this.db.prepare("UPDATE follows SET status = ? WHERE follow_id = ?").run(status, followId);
   }
@@ -629,16 +662,61 @@ export class GatewayStorage {
 
   // --- Social: DMs ---
 
-  findOrCreateDmThread(participant1: string, participant2: string): DmThreadRecord {
+  findOrCreateDmThread(participant1: string, participant2: string, intro = "", accepted = false): DmThreadRecord {
     const existing = this.db.prepare<[string, string, string, string], Record<string, unknown>>(
       "SELECT * FROM dm_threads WHERE (participant1 = ? AND participant2 = ?) OR (participant1 = ? AND participant2 = ?)"
     ).get(participant1, participant2, participant2, participant1);
     if (existing) {
-      return { threadId: existing.thread_id as string, participant1: existing.participant1 as string, participant2: existing.participant2 as string, createdAt: existing.created_at as string };
+      return {
+        threadId: existing.thread_id as string,
+        participant1: existing.participant1 as string,
+        participant2: existing.participant2 as string,
+        status: existing.status as DmThreadRecord["status"],
+        intro: existing.intro as string,
+        createdAt: existing.created_at as string,
+      };
     }
-    const thread: DmThreadRecord = { threadId: `dmt_${randomUUID()}`, participant1, participant2, createdAt: new Date().toISOString() };
-    this.db.prepare("INSERT INTO dm_threads (thread_id, participant1, participant2, created_at) VALUES (?, ?, ?, ?)").run(thread.threadId, thread.participant1, thread.participant2, thread.createdAt);
+    const thread: DmThreadRecord = {
+      threadId: `dmt_${randomUUID()}`,
+      participant1,
+      participant2,
+      status: accepted ? "accepted" : "pending",
+      intro,
+      createdAt: new Date().toISOString(),
+    };
+    this.db.prepare("INSERT INTO dm_threads (thread_id, participant1, participant2, status, intro, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(thread.threadId, thread.participant1, thread.participant2, thread.status, thread.intro, thread.createdAt);
     return thread;
+  }
+
+  getDmThread(threadId: string): DmThreadRecord | undefined {
+    const row = this.db.prepare<[string], Record<string, unknown>>("SELECT * FROM dm_threads WHERE thread_id = ?").get(threadId);
+    if (!row) return undefined;
+    return {
+      threadId: row.thread_id as string,
+      participant1: row.participant1 as string,
+      participant2: row.participant2 as string,
+      status: row.status as DmThreadRecord["status"],
+      intro: row.intro as string,
+      createdAt: row.created_at as string,
+    };
+  }
+
+  listDmThreads(avatarDid: string): DmThreadRecord[] {
+    return this.db.prepare<[string, string], Record<string, unknown>>(
+      "SELECT * FROM dm_threads WHERE participant1 = ? OR participant2 = ? ORDER BY created_at DESC",
+    ).all(avatarDid, avatarDid).map((row) => ({
+      threadId: row.thread_id as string,
+      participant1: row.participant1 as string,
+      participant2: row.participant2 as string,
+      status: row.status as DmThreadRecord["status"],
+      intro: row.intro as string,
+      createdAt: row.created_at as string,
+    }));
+  }
+
+  setDmThreadStatus(threadId: string, status: DmThreadRecord["status"]): void {
+    this.db.prepare("UPDATE dm_threads SET status = ? WHERE thread_id = ?").run(status, threadId);
   }
 
   addDmMessage(msg: DmMessageRecord): void {

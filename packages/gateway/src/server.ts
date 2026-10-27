@@ -19,11 +19,16 @@
 
 import Fastify from "fastify";
 import websocketPlugin from "@fastify/websocket";
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
+import type { IncomingHttpHeaders, IncomingMessage } from "node:http";
+import type { TLSSocket } from "node:tls";
 import type { WebSocket } from "ws";
-import { generateIdentity, signPayload, verifyPayload } from "./identity.js";
-import { grantScopes, type Scope } from "./policy.js";
-import { issueVisitToken, verifyVisitToken, JtiReplayCache, type VisitTokenClaims } from "./tokens.js";
+import { didKeyFromPublicKey, generateIdentity, signPayload, verifyPayload } from "./identity.js";
+import { GATEWAY_MAX_SCOPES, grantScopes, type Scope } from "./policy.js";
+import {
+  issueVisitToken, verifyVisitToken, JtiReplayCache, proofKeyThumbprint, proofSignaturePayload,
+  type VisitTokenClaims,
+} from "./tokens.js";
 import { signChatFrame, type SignedChatFrame, type RelayedChatMessage } from "./relay.js";
 import {
   GatewayStorage,
@@ -44,15 +49,16 @@ export interface GatewayServerOptions {
   logger?: boolean;
   /** Port to listen on */
   port?: number;
+  /** Bind interface; loopback by default. */
+  host?: string;
   /** HTTPS TLS options */
   https?: { key: string; cert: string; ca?: string };
   /** Optional billing adapter for usage metering (no payment provider hard-wired). */
   billingAdapter?: BillingAdapter;
-  /**
-   * If true, all API requests require x-tenant-key header (hosted/cloud mode).
-   * Self-hosted deployments leave this false (open, no tenant auth).
-   */
+  /** Require tenant API keys on /v1 routes. */
   hostedMode?: boolean;
+  /** Operator secret required to create tenant credentials. */
+  tenantAdminKey?: string;
 }
 
 export interface GatewayServer {
@@ -72,10 +78,17 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
   const storage = new GatewayStorage(opts.dbPath ?? ":memory:");
   const gatewayIdentity = generateIdentity();
   const jtiCache = new JtiReplayCache();
+  const signedRequestNonces = new Map<string, number>();
   const billingAdapter = opts.billingAdapter;
+  const tenantForRequest = new WeakMap<object, TenantRecord>();
 
-  // Active WebSocket sessions: visitId → { visitor?: WebSocket; host?: WebSocket }
-  const wsSessions = new Map<string, { visitor?: WebSocket; host?: WebSocket }>();
+  // Active WebSocket sessions and per-visit limits.
+  const wsSessions = new Map<string, {
+    visitor?: WebSocket; host?: WebSocket; visitorTimes: number[]; hostTimes: number[]; messageCount: number;
+    lastSeqBySender: Map<string, number>;
+  }>();
+  const wsAuth = new WeakMap<WebSocket, { role: "visitor" | "host"; lastSeq: number }>();
+  const wsExpiryTimers = new WeakMap<WebSocket, ReturnType<typeof setTimeout>>();
 
   const app = Fastify({
     logger: opts.logger ?? false,
@@ -84,15 +97,51 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
           https: {
             key: opts.https.key,
             cert: opts.https.cert,
-            ...(opts.https.ca ? { ca: opts.https.ca, requestCert: true, rejectUnauthorized: false } : {}),
+            ...(opts.https.ca ? { ca: opts.https.ca, requestCert: true, rejectUnauthorized: true } : {}),
           },
         }
       : {}),
   });
 
-  app.register(websocketPlugin);
+  app.register(websocketPlugin, { options: { maxPayload: 16_384 } });
 
-  // Helper: verify HTTP message signature from x-ag-sig header (simplified)
+  app.addHook("preHandler", async (request, reply) => {
+    if (!request.url.startsWith("/v1/") || request.url.split("?", 1)[0] === "/v1/tenants") return;
+    if (request.headers.upgrade === "websocket") return;
+    const tenantKey = request.headers["x-tenant-key"];
+    if (typeof tenantKey !== "string") {
+      if (opts.hostedMode) return reply.status(401).send({ type: "unauthorized", detail: "x-tenant-key is required" });
+      return;
+    }
+    const tenant = storage.getTenantByApiKey(tenantKey);
+    if (!tenant) return reply.status(401).send({ type: "unauthorized", detail: "Invalid tenant key" });
+    const now = Date.now();
+    const minuteStart = new Date(now - 60_000).toISOString();
+    const calls = storage.getTenantDailyUsage(tenant.tenantId, "api.call", minuteStart);
+    if (calls >= tenant.quotas.apiCallsPerMinute) {
+      return reply.status(429).send({ type: "rate_limited", detail: "Tenant API call limit exceeded" });
+    }
+    tenantForRequest.set(request, tenant);
+    storage.recordUsage({ tenantId: tenant.tenantId, eventType: "api.call", quantity: 1, ts: new Date(now).toISOString() }, billingAdapter);
+  });
+
+  function meterTenantUsage(
+    request: object,
+    eventType: "visit.started" | "post.created" | "dm.sent" | "page.read",
+    metadata?: Record<string, unknown>,
+  ): boolean {
+    const tenant = tenantForRequest.get(request);
+    if (!tenant) return true;
+    const quotaResource = eventType === "visit.started" ? "visitsPerDay"
+      : eventType === "post.created" ? "postsPerDay"
+      : eventType === "dm.sent" ? "dmRequestsPerDay"
+      : undefined;
+    if (quotaResource && !storage.checkTenantQuota(tenant.tenantId, quotaResource).allowed) return false;
+    storage.recordUsage({ tenantId: tenant.tenantId, eventType, quantity: 1, ts: new Date().toISOString(), metadata }, billingAdapter);
+    return true;
+  }
+
+  // Verify signed site requests and bound memory use for the replay cache.
   function verifyRequestSignature(
     method: string,
     path: string,
@@ -100,22 +149,103 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
     headers: Record<string, string | string[] | undefined>,
     publicKeyPem: string,
   ): boolean {
-    const ts = headers["x-ag-ts"] as string;
-    const nonce = headers["x-ag-nonce"] as string;
-    const sig = headers["x-ag-sig"] as string;
-    if (!ts || !nonce || !sig) return false;
-    // Check timestamp within 60s
+    const header = (name: string): string | undefined => {
+      const value = headers[name];
+      return typeof value === "string" ? value : undefined;
+    };
+    const ts = header("x-ag-ts");
+    const nonce = header("x-ag-nonce");
+    const sig = header("x-ag-sig");
+    if (!ts || !nonce || nonce.length < 16 || nonce.length > 200 || !sig) return false;
     const delta = Math.abs(Date.now() - Date.parse(ts));
     if (!Number.isFinite(delta) || delta > 60_000) return false;
     const payload = `${method.toUpperCase()} ${path}\n${ts}\n${nonce}\n${body}`;
-    return verifyPayload(payload, sig, publicKeyPem);
+    if (!verifyPayload(payload, sig, publicKeyPem)) return false;
+    const now = Date.now();
+    for (const [key, expiry] of signedRequestNonces) if (expiry <= now) signedRequestNonces.delete(key);
+    const replayKey = `${didKeyFromPublicKey(publicKeyPem)}:${nonce}`;
+    if (signedRequestNonces.has(replayKey) || signedRequestNonces.size >= 100_000) return false;
+    signedRequestNonces.set(replayKey, now + 120_000);
+    return true;
   }
 
-  // Helper: get client cert fingerprint for mTLS
-  function getClientCertFingerprint(request: { raw: { socket: { getPeerCertificate?: () => { fingerprint?: string } } } }): string | undefined {
-    const cert = request.raw.socket.getPeerCertificate?.();
-    if (!cert?.fingerprint) return undefined;
-    return `sha256:${cert.fingerprint.replace(/:/g, "").toLowerCase()}`;
+  type SignedGatewayRequest = { method: string; raw: IncomingMessage; body?: unknown; headers: IncomingHttpHeaders };
+
+  function verifySignedBody(request: SignedGatewayRequest, publicKeyPem: string): boolean {
+    try {
+      return verifyRequestSignature(
+        request.method,
+        request.raw.url ?? "/",
+        request.body === undefined ? "" : JSON.stringify(request.body),
+        request.headers,
+        publicKeyPem,
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  function normalizeFingerprint(value: string): string {
+    return value.replace(/^sha256:/i, "").replace(/:/g, "").toLowerCase();
+  }
+
+  // A configured CA enables mandatory mutual TLS and binds the peer certificate to the registered site.
+  function verifyClientCertificate(request: { raw: IncomingMessage }, expectedFingerprint?: string): boolean {
+    if (!opts.https?.ca) return true;
+    const socket = request.raw.socket as TLSSocket;
+    const cert = socket.getPeerCertificate();
+    if (socket.authorized !== true || !cert.fingerprint256 || !expectedFingerprint) return false;
+    return normalizeFingerprint(cert.fingerprint256) === normalizeFingerprint(expectedFingerprint);
+  }
+
+  function verifySiteRequest(request: SignedGatewayRequest, site: SiteRecord): boolean {
+    return request.headers["x-ag-site-did"] === site.siteDid &&
+      verifyClientCertificate(request, site.mtlsCertFingerprint) && verifySignedBody(request, site.publicKeyPem);
+  }
+
+  function verifyOwnerRequest(request: SignedGatewayRequest, avatarDid: string): boolean {
+    const avatar = storage.getAvatar(avatarDid);
+    const site = avatar ? storage.getSite(avatar.siteDid) : undefined;
+    return Boolean(site && verifySiteRequest(request, site));
+  }
+
+  function verifyVisitorHttpRequest(request: SignedGatewayRequest, visit: VisitRecord): boolean {
+    const header = (name: string): string | undefined => {
+      const value = request.headers[name];
+      return typeof value === "string" ? value : undefined;
+    };
+    const authorization = header("authorization");
+    const token = authorization?.startsWith("Bearer ") ? authorization.slice(7) : "";
+    const encodedProofKey = header("x-ag-pop-key");
+    const proofTs = header("x-ag-pop-ts");
+    const proofNonce = header("x-ag-pop-nonce");
+    const proofSig = header("x-ag-pop-sig");
+    if (!token || !encodedProofKey || encodedProofKey.length > 4096 || !proofTs || !proofNonce || !proofSig ||
+        proofNonce.length < 16 || proofNonce.length > 200) return false;
+    try {
+      const claims = verifyVisitToken(
+        token,
+        gatewayIdentity.publicKeyPem,
+        visit.hostSiteDid,
+        jtiCache,
+        Math.floor(Date.now() / 1000),
+        false,
+      );
+      const proofKeyPem = Buffer.from(encodedProofKey, "base64url").toString("utf8");
+      const thumbprint = proofKeyThumbprint(proofKeyPem);
+      const now = Date.now();
+      const proofDelta = Math.abs(now - Date.parse(proofTs));
+      if (claims.vid !== visit.visitId || claims.sub !== visit.visitorAvatarDid ||
+          !claims.scp.includes("page:read-public") || !visit.grantedScopes.includes("page:read-public") ||
+          claims.cnf.jkt !== thumbprint || !Number.isFinite(proofDelta) || proofDelta > 60_000 ||
+          !verifyPayload(proofSignaturePayload(request.method, request.raw.url ?? "/", token, proofTs, proofNonce), proofSig, proofKeyPem)) {
+        return false;
+      }
+      const nowSeconds = Math.floor(now / 1000);
+      return jtiCache.consume(`http-pop:${thumbprint}:${proofNonce}`, nowSeconds + 120, nowSeconds);
+    } catch {
+      return false;
+    }
   }
 
   // ===== Site registration =====
@@ -127,6 +257,32 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
       if (!body?.site_did || !body.origin || !body.public_key_pem || !body.backend_url) {
         return reply.status(400).send({ type: "invalid_request", detail: "Missing required fields" });
       }
+      try {
+        if (didKeyFromPublicKey(body.public_key_pem) !== body.site_did ||
+            request.headers["x-ag-site-did"] !== body.site_did ||
+            !verifyClientCertificate(request, body.mtls_cert_fingerprint) || !verifySignedBody(request, body.public_key_pem)) {
+          return reply.status(401).send({ type: "invalid_signature" });
+        }
+      } catch {
+        return reply.status(401).send({ type: "invalid_signature" });
+      }
+      try {
+        const origin = new URL(body.origin);
+        const backendUrl = new URL(body.backend_url);
+        if (!(["http:", "https:"].includes(origin.protocol) && origin.origin === body.origin &&
+              ["http:", "https:"].includes(backendUrl.protocol) && !backendUrl.username && !backendUrl.password &&
+              !backendUrl.search && !backendUrl.hash)) throw new Error("invalid site URL");
+      } catch {
+        return reply.status(400).send({ type: "invalid_request", detail: "origin and backend_url must be valid HTTP(S) URLs." });
+      }
+      const offeredScopes = body.offered_scopes ?? ["chat:send", "chat:receive", "page:read-public", "presence:announce"];
+      if (!Array.isArray(offeredScopes) || offeredScopes.some((scope) => !GATEWAY_MAX_SCOPES.includes(scope as Scope))) {
+        return reply.status(400).send({ type: "invalid_request", detail: "offered_scopes contains an unsupported scope." });
+      }
+      const publicPaths = body.public_paths ?? ["/", "/*"];
+      if (!Array.isArray(publicPaths) || publicPaths.some((path) => typeof path !== "string" || !path.startsWith("/") || path.startsWith("//") || path.includes("\\") || path.includes("?") || path.includes("#") || path.split("/").includes(".."))) {
+        return reply.status(400).send({ type: "invalid_request", detail: "public_paths must contain safe absolute paths." });
+      }
       const site: SiteRecord = {
         siteDid: body.site_did,
         origin: body.origin,
@@ -136,8 +292,8 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
         contact: body.contact ?? "",
         mtlsCertFingerprint: body.mtls_cert_fingerprint ?? "",
         acceptingVisitors: true,
-        offeredScopes: (body.offered_scopes ?? ["chat:send", "chat:receive", "page:read-public", "presence:announce"]) as Scope[],
-        publicPaths: body.public_paths ?? ["/", "/*"],
+        offeredScopes: offeredScopes as Scope[],
+        publicPaths,
         createdAt: new Date().toISOString(),
       };
       storage.registerSite(site);
@@ -167,6 +323,17 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
       if (!body?.avatar_did || !body.name || !body.public_key_pem) {
         return reply.status(400).send({ type: "invalid_request", detail: "Missing required fields" });
       }
+      try {
+        if (!verifySiteRequest(request, site) || didKeyFromPublicKey(body.public_key_pem) !== body.avatar_did) {
+          return reply.status(401).send({ type: "invalid_signature" });
+        }
+      } catch {
+        return reply.status(401).send({ type: "invalid_signature" });
+      }
+      const maxVisits = body.travel?.max_visits_per_day ?? 10;
+      if (body.name.length > 100 || !Number.isInteger(maxVisits) || maxVisits < 1 || maxVisits > 100) {
+        return reply.status(400).send({ type: "invalid_request", detail: "Invalid avatar name or daily visit limit." });
+      }
       const avatar: AvatarRecord = {
         avatarDid: body.avatar_did,
         siteDid: did,
@@ -175,7 +342,7 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
         publicBio: body.public_bio ?? "",
         look: body.look ?? { style: "brick-minifig" },
         travelEnabled: body.travel?.enabled ?? true,
-        maxVisitsPerDay: body.travel?.max_visits_per_day ?? 10,
+        maxVisitsPerDay: maxVisits,
         createdAt: new Date().toISOString(),
       };
       storage.registerAvatar(avatar);
@@ -221,7 +388,7 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
     };
   }>("/v1/visits", async (request, reply) => {
     const body = request.body;
-    if (!body?.visitor_avatar_did || !body.home_site_did || !body.host_site_did || !body.requested_scopes) {
+    if (!body?.visitor_avatar_did || !body.home_site_did || !body.host_site_did || !Array.isArray(body.requested_scopes)) {
       return reply.status(400).send({ type: "invalid_request", detail: "Missing required fields" });
     }
 
@@ -230,13 +397,28 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
 
     const homeSite = storage.getSite(body.home_site_did);
     if (!homeSite) return reply.status(401).send({ type: "unknown_identity", detail: "Home site not registered" });
+    if (visitorAvatar.siteDid !== homeSite.siteDid) {
+      return reply.status(403).send({ type: "identity_mismatch", detail: "Visitor avatar is not registered to the home site" });
+    }
+    if (!visitorAvatar.travelEnabled) return reply.status(403).send({ type: "travel_disabled" });
+    if (!verifySiteRequest(request, homeSite)) {
+      return reply.status(401).send({ type: "invalid_signature" });
+    }
 
     const hostSite = storage.getSite(body.host_site_did);
     if (!hostSite) return reply.status(403).send({ type: "host_rejected", detail: "Host site not found or not accepting visitors" });
     if (!hostSite.acceptingVisitors) return reply.status(403).send({ type: "host_rejected", detail: "Host site not accepting visitors" });
 
-    if (storage.isRevoked(body.visitor_avatar_did) || storage.isRevoked(body.home_site_did)) {
+    if (storage.isRevoked(body.visitor_avatar_did) || storage.isRevoked(body.home_site_did) || storage.isRevoked(body.host_site_did)) {
       return reply.status(410).send({ type: "revoked", detail: "Visitor or home site is revoked" });
+    }
+    const visitDayStart = new Date();
+    visitDayStart.setUTCHours(0, 0, 0, 0);
+    if (storage.countVisitsSince(body.visitor_avatar_did, visitDayStart.toISOString()) >= visitorAvatar.maxVisitsPerDay) {
+      return reply.status(429).send({ type: "quota_exceeded", detail: "Avatar daily visit limit exceeded" });
+    }
+    if (!meterTenantUsage(request, "visit.started", { visitor_avatar_did: body.visitor_avatar_did, host_site_did: body.host_site_did })) {
+      return reply.status(429).send({ type: "quota_exceeded", detail: "Tenant daily visit quota exceeded" });
     }
 
     const grantedScopes = grantScopes(body.requested_scopes, hostSite.offeredScopes);
@@ -260,7 +442,7 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
       visit_id: visitId, host_site_did: body.host_site_did, scopes: grantedScopes,
     }, visitId);
 
-    // Try to notify host backend
+    // Notify host backend; the local demo auto-accepts when no timely decision arrives.
     try {
       const hookBody = JSON.stringify({
         visit_id: visitId,
@@ -276,13 +458,15 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
           "Content-Type": "application/json",
           "x-ag-ts": hookTs, "x-ag-nonce": hookNonce, "x-ag-sig": hookSig,
         },
-        body: hookBody, signal: AbortSignal.timeout(5000),
+        body: hookBody, signal: AbortSignal.timeout(2000),
       }).then(async (r) => {
         if (r.ok) {
           const decision = await r.json() as { decision?: string };
           if (decision.decision === "accept") {
             storage.updateVisitStatus(visitId, "active");
             storage.appendAudit("visit.accepted", body.host_site_did, { visit_id: visitId }, visitId);
+          } else if (decision.decision === "reject") {
+            storage.updateVisitStatus(visitId, "rejected", "host_rejected");
           }
         }
       }).catch(() => { /* host hook optional */ });
@@ -290,44 +474,75 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
 
     // Auto-accept for now (host can reject via hook)
     const currentVisit = storage.getVisit(visitId);
+    if (currentVisit?.status === "rejected") {
+      return reply.status(403).send({ type: "host_rejected", visit_id: visitId, status: "rejected" });
+    }
     if (currentVisit?.status === "pending") storage.updateVisitStatus(visitId, "active");
 
+    const grantExpiresAt = new Date(Date.now() + 60_000).toISOString();
     return reply.status(201).send({
       visit_id: visitId, status: "accepted", granted_scopes: grantedScopes,
       limits: { max_turns: 40, max_msg_chars: 2000, msgs_per_minute: 6, page_reads: 10 },
-      visit_grant: grantId, grant_expires_at: new Date(Date.now() + 60_000).toISOString(),
-      // Embed the mapping in grant (gateway signs it)
-      _grant_meta: signPayload(`${grantId}:${visitId}:${body.visitor_avatar_did}`, gatewayIdentity.privateKeyPem),
+      visit_grant: grantId, grant_expires_at: grantExpiresAt,
+      _grant_meta: signPayload(`${grantId}:${visitId}:${body.visitor_avatar_did}:${grantExpiresAt}`, gatewayIdentity.privateKeyPem),
     });
   });
 
   // ===== Token exchange =====
 
-  app.post<{ Body: { visit_grant: string; pop_key_thumbprint: string; _grant_meta?: string; visit_id?: string; visitor_avatar_did?: string } }>(
+  app.post<{ Body: {
+    visit_grant: string; grant_expires_at: string; _grant_meta: string; visit_id: string; visitor_avatar_did: string;
+    proof_public_key: string; proof_ts: string; proof_nonce: string; proof_sig: string;
+  } }>(
     "/v1/tokens/exchange",
     async (request, reply) => {
       const body = request.body;
-      if (!body?.visit_grant || !body.pop_key_thumbprint) {
-        return reply.status(400).send({ type: "invalid_request", detail: "Missing visit_grant or pop_key_thumbprint" });
+      if (!body?.visit_grant || !body.grant_expires_at || !body._grant_meta || !body.visit_id || !body.visitor_avatar_did ||
+          !body.proof_public_key || !body.proof_ts || !body.proof_nonce || !body.proof_sig) {
+        return reply.status(400).send({ type: "invalid_request", detail: "Missing grant or proof-of-possession fields" });
       }
-
-      // In a real impl we'd verify the grant sig; for now we trust visit_id + visitor passed directly
-      if (!body.visit_id || !body.visitor_avatar_did) {
-        return reply.status(400).send({ type: "invalid_request", detail: "visit_id and visitor_avatar_did required" });
-      }
-
       const visit = storage.getVisit(body.visit_id);
-      if (!visit || visit.status !== "active") {
+      if (!visit || visit.status !== "active" || visit.visitorAvatarDid !== body.visitor_avatar_did ||
+          storage.isRevoked(visit.visitId) || storage.isRevoked(visit.visitorAvatarDid) ||
+          storage.isRevoked(visit.homeSiteDid) || storage.isRevoked(visit.hostSiteDid)) {
         return reply.status(410).send({ type: "visit_ended", detail: "Visit not found or not active" });
       }
-
-      const hostSite = storage.getSite(visit.hostSiteDid);
-      if (!hostSite) return reply.status(500).send({ type: "internal_error" });
+      const homeSite = storage.getSite(visit.homeSiteDid);
+      if (!homeSite) return reply.status(500).send({ type: "internal_error" });
+      if (!verifySiteRequest(request, homeSite)) {
+        return reply.status(401).send({ type: "invalid_signature" });
+      }
+      const grantExpiry = Date.parse(body.grant_expires_at);
+      const now = Date.now();
+      if (!Number.isFinite(grantExpiry) || grantExpiry <= now || grantExpiry > now + 60_000 ||
+          !verifyPayload(`${body.visit_grant}:${visit.visitId}:${visit.visitorAvatarDid}:${body.grant_expires_at}`, body._grant_meta, gatewayIdentity.publicKeyPem)) {
+        return reply.status(401).send({ type: "invalid_grant" });
+      }
+      let thumbprint: string;
+      try {
+        thumbprint = proofKeyThumbprint(body.proof_public_key);
+      } catch {
+        return reply.status(400).send({ type: "invalid_proof_key" });
+      }
+      const proofDelta = Math.abs(now - Date.parse(body.proof_ts));
+      if (!Number.isFinite(proofDelta) || proofDelta > 60_000 || body.proof_nonce.length < 16 || body.proof_nonce.length > 200 ||
+          !verifyPayload(
+            proofSignaturePayload("POST", "/v1/tokens/exchange", `${body.visit_grant}:${body.grant_expires_at}:${thumbprint}`, body.proof_ts, body.proof_nonce),
+            body.proof_sig,
+            body.proof_public_key,
+          )) {
+        return reply.status(401).send({ type: "invalid_proof" });
+      }
+      const nowSeconds = Math.floor(now / 1000);
+      if (!jtiCache.consume(`grant:${body.visit_grant}`, Math.ceil(grantExpiry / 1000), nowSeconds) ||
+          !jtiCache.consume(`proof:${thumbprint}:${body.proof_nonce}`, nowSeconds + 120, nowSeconds)) {
+        return reply.status(401).send({ type: "replay_detected" });
+      }
 
       const { token, claims } = issueVisitToken({
         issuer, subject: visit.visitorAvatarDid, audience: visit.hostSiteDid,
         visitId: visit.visitId, scopes: visit.grantedScopes,
-        proofKeyThumbprint: body.pop_key_thumbprint,
+        proofKeyThumbprint: thumbprint,
       }, gatewayIdentity.privateKeyPem);
 
       storage.appendAudit("token.issued", visit.visitorAvatarDid, { visit_id: visit.visitId, jti: claims.jti }, visit.visitId);
@@ -347,6 +562,8 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
       const { id } = request.params;
       const visit = storage.getVisit(id);
       if (!visit) return reply.status(404).send({ type: "not_found" });
+      const homeSite = storage.getSite(visit.homeSiteDid);
+      if (!homeSite || !verifySiteRequest(request, homeSite)) return reply.status(401).send({ type: "invalid_signature" });
       storage.updateVisitStatus(id, "ended", request.body?.reason ?? "visitor_left", new Date().toISOString());
       // Close WebSocket connections
       const session = wsSessions.get(id);
@@ -354,6 +571,8 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
         const endMsg = JSON.stringify({ type: "visit.ended", reason: request.body?.reason ?? "visitor_left" });
         session.visitor?.send(endMsg);
         session.host?.send(endMsg);
+      session.visitor?.close(1000, "visit ended");
+      session.host?.close(1000, "visit ended");
         wsSessions.delete(id);
       }
       storage.appendAudit("visit.ended", visit.visitorAvatarDid, { visit_id: id, reason: request.body?.reason }, id);
@@ -381,31 +600,73 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
       if (!visit.grantedScopes.includes("page:read-public")) {
         return reply.status(403).send({ type: "scope_denied", detail: "page:read-public not granted" });
       }
+      if (!verifyVisitorHttpRequest(request, visit)) return reply.status(401).send({ type: "invalid_visitor_auth" });
       const path = request.query.path ?? "/";
       const hostSite = storage.getSite(visit.hostSiteDid);
       if (!hostSite) return reply.status(500).send({ type: "internal_error" });
-
-      // Check path is in public_paths
-      const allowed = hostSite.publicPaths.some((p) => {
-        if (p.endsWith("/*")) return path.startsWith(p.slice(0, -1));
-        return path === p;
-      });
-      if (!allowed) return reply.status(403).send({ type: "path_not_public", detail: "Path not in public_paths" });
+      if (typeof path !== "string" || path.length > 2048 || !path.startsWith("/") || path.startsWith("//") || path.includes("\\")) {
+        return reply.status(400).send({ type: "invalid_path" });
+      }
 
       try {
-        const url = `${hostSite.origin}${path}`;
-        const response = await fetch(url, { signal: AbortSignal.timeout(8000) });
-        const text = await response.text();
+        const requestedUrl = new URL(path, hostSite.origin);
+        if (requestedUrl.origin !== new URL(hostSite.origin).origin || requestedUrl.username || requestedUrl.password || requestedUrl.hash) {
+          return reply.status(400).send({ type: "invalid_path" });
+        }
+        const decodedPath = decodeURIComponent(requestedUrl.pathname);
+        if (decodedPath.includes("\\") || decodedPath.includes("?") || decodedPath.includes("#") || decodedPath.startsWith("//")) {
+          return reply.status(400).send({ type: "invalid_path" });
+        }
+        const url = new URL(`${decodedPath}${requestedUrl.search}`, hostSite.origin);
+        if (url.origin !== new URL(hostSite.origin).origin) return reply.status(400).send({ type: "invalid_path" });
+        const allowed = hostSite.publicPaths.some((publicPath) => {
+          let normalizedPath: string;
+          try { normalizedPath = decodeURIComponent(publicPath); }
+          catch { return false; }
+          if (normalizedPath.endsWith("/*")) return url.pathname.startsWith(normalizedPath.slice(0, -1));
+          return url.pathname === normalizedPath;
+        });
+        if (!allowed) return reply.status(403).send({ type: "path_not_public", detail: "Path not in public_paths" });
+        const response = await fetch(url, { signal: AbortSignal.timeout(8000), redirect: "error" });
+        const contentType = response.headers.get("content-type") ?? "";
+        if (!response.ok || (!contentType.startsWith("text/html") && !contentType.startsWith("text/plain"))) {
+          return reply.status(415).send({ type: "unsupported_content", detail: "Only HTML and plain text pages can be read." });
+        }
+        const reader = response.body?.getReader();
+        const chunks: Uint8Array[] = [];
+        let byteLength = 0;
+        let rawTruncated = false;
+        if (reader) {
+          while (true) {
+            const part = await reader.read();
+            if (part.done) break;
+            const remaining = 1_048_576 - byteLength;
+            if (part.value.byteLength > remaining) {
+              chunks.push(part.value.subarray(0, Math.max(0, remaining)));
+              byteLength += Math.max(0, remaining);
+              rawTruncated = true;
+              await reader.cancel();
+              break;
+            }
+            chunks.push(part.value);
+            byteLength += part.value.byteLength;
+          }
+        }
+        const bytes = new Uint8Array(byteLength);
+        let offset = 0;
+        for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+        const text = new TextDecoder().decode(bytes);
         // Sanitize: strip scripts, extract text content (basic)
         const sanitized = text
           .replace(/<script[\s\S]*?<\/script>/gi, "")
           .replace(/<style[\s\S]*?<\/style>/gi, "")
           .replace(/<[^>]+>/g, " ")
           .replace(/\s+/g, " ")
-          .trim()
-          .slice(0, 32_768);
+          .trim();
+        const outputText = sanitized.slice(0, 32_768);
+        meterTenantUsage(request, "page.read", { visit_id: request.params.id, path });
         storage.appendAudit("page.read", visit.visitorAvatarDid, { visit_id: request.params.id, path }, request.params.id);
-        return reply.send({ url, fetched_at: new Date().toISOString(), content_type: "text/plain", text, title: path, truncated: text.length > 32_768 });
+        return reply.send({ url: url.toString(), fetched_at: new Date().toISOString(), content_type: "text/plain", text: outputText, title: path, truncated: rawTruncated || sanitized.length > outputText.length });
       } catch {
         return reply.status(502).send({ type: "proxy_error", detail: "Could not fetch page" });
       }
@@ -421,29 +682,102 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
       (socket, request) => {
         const visitId = request.params.id;
         const visit = storage.getVisit(visitId);
-        if (!visit || visit.status !== "active") {
+        if (!visit || visit.status !== "active" || storage.isRevoked(visit.visitId) ||
+            storage.isRevoked(visit.visitorAvatarDid) || storage.isRevoked(visit.homeSiteDid) || storage.isRevoked(visit.hostSiteDid)) {
           socket.send(JSON.stringify({ type: "error", code: "visit_ended" }));
           socket.close();
           return;
         }
-
-        // Determine if visitor or host based on x-ag-role header or first message
-        const role = (request.headers["x-ag-role"] as string) ?? "visitor";
-        if (!wsSessions.has(visitId)) wsSessions.set(visitId, {});
+        const roleHeader = request.headers["x-ag-role"];
+        const role = typeof roleHeader === "string" ? roleHeader : "";
+        const path = request.raw.url ?? `/v1/visits/${visitId}/session`;
+        let visitorTokenExpiresAt: number | undefined;
+        if (role === "visitor") {
+          const authorization = request.headers.authorization;
+          const token = typeof authorization === "string" && authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
+          const encodedProofKey = request.headers["x-ag-pop-key"];
+          const proofTs = request.headers["x-ag-pop-ts"];
+          const proofNonce = request.headers["x-ag-pop-nonce"];
+          const proofSig = request.headers["x-ag-pop-sig"];
+          try {
+            const homeSite = storage.getSite(visit.homeSiteDid);
+            if (!homeSite || !verifyClientCertificate(request, homeSite.mtlsCertFingerprint)) throw new Error("invalid client certificate");
+            const claims = verifyVisitToken(token, gatewayIdentity.publicKeyPem, visit.hostSiteDid, jtiCache);
+            visitorTokenExpiresAt = claims.exp;
+            if (claims.vid !== visit.visitId || claims.sub !== visit.visitorAvatarDid || typeof encodedProofKey !== "string" ||
+                typeof proofTs !== "string" || typeof proofNonce !== "string" || typeof proofSig !== "string" || proofNonce.length < 16 || proofNonce.length > 200) {
+              throw new Error("invalid visitor claims");
+            }
+            const proofKeyPem = Buffer.from(encodedProofKey, "base64url").toString("utf8");
+            const proofDelta = Math.abs(Date.now() - Date.parse(proofTs));
+            if (proofKeyThumbprint(proofKeyPem) !== claims.cnf.jkt ||
+                !Number.isFinite(proofDelta) || proofDelta > 60_000 ||
+                !verifyPayload(proofSignaturePayload("GET", path, token, proofTs, proofNonce), proofSig, proofKeyPem) ||
+                !jtiCache.consume(`ws:${claims.cnf.jkt}:${proofNonce}`, Math.floor(Date.now() / 1000) + 120)) {
+              throw new Error("invalid visitor proof");
+            }
+          } catch {
+            socket.send(JSON.stringify({ type: "error", code: "invalid_visitor_auth" }));
+            socket.close();
+            return;
+          }
+        } else if (role === "host") {
+          const siteDid = request.headers["x-ag-site-did"];
+          const hostSite = storage.getSite(visit.hostSiteDid);
+          if (siteDid !== visit.hostSiteDid || !hostSite || !verifyClientCertificate(request, hostSite.mtlsCertFingerprint) ||
+              !verifyRequestSignature("GET", path, "", request.headers, hostSite.publicKeyPem)) {
+            socket.send(JSON.stringify({ type: "error", code: "invalid_host_auth" }));
+            socket.close();
+            return;
+          }
+        } else {
+          socket.send(JSON.stringify({ type: "error", code: "invalid_role" }));
+          socket.close();
+          return;
+        }
+        if (!wsSessions.has(visitId)) wsSessions.set(visitId, { visitorTimes: [], hostTimes: [], messageCount: 0, lastSeqBySender: new Map() });
         const session = wsSessions.get(visitId)!;
+        const existing = role === "visitor" ? session.visitor : session.host;
+        if (existing && existing !== socket) existing.close(4001, "replaced by authenticated connection");
         if (role === "visitor") session.visitor = socket;
         else session.host = socket;
+        wsAuth.set(socket, { role, lastSeq: 0 });
+        if (visitorTokenExpiresAt !== undefined) {
+          const delay = Math.max(0, visitorTokenExpiresAt * 1000 - Date.now());
+          wsExpiryTimers.set(socket, setTimeout(() => socket.close(4003, "visit token expired"), delay));
+        }
 
         socket.on("message", (raw) => {
           try {
+            const currentVisit = storage.getVisit(visitId);
+            if (!currentVisit || currentVisit.status !== "active" || storage.isRevoked(visitId) ||
+                storage.isRevoked(currentVisit.visitorAvatarDid) || storage.isRevoked(currentVisit.homeSiteDid) || storage.isRevoked(currentVisit.hostSiteDid)) {
+              socket.send(JSON.stringify({ type: "error", code: "visit_ended" }));
+              socket.close(4003, "visit ended or revoked");
+              return;
+            }
             const frame = JSON.parse(raw.toString()) as SignedChatFrame & { role?: string };
             if (frame.type === "chat.message") {
+              const auth = wsAuth.get(socket);
+              const frameTime = Date.parse(frame.ts);
+              if (!auth || frame.visit_id !== visitId || typeof frame.from !== "string" || !Number.isSafeInteger(frame.seq) ||
+                  frame.seq <= Math.max(auth.lastSeq, session.lastSeqBySender.get(frame.from) ?? 0) ||
+                  typeof frame.text !== "string" || frame.text.length === 0 || frame.text.length > 2000 ||
+                  !Number.isFinite(frameTime) || Math.abs(Date.now() - frameTime) > 60_000) {
+                socket.send(JSON.stringify({ type: "error", code: "invalid_frame" }));
+                return;
+              }
               // Verify signature
               const isVisitor = frame.from === visit.visitorAvatarDid;
-              const isHost = storage.listAvatarsForSite(visit.hostSiteDid).some((a) => a.avatarDid === frame.from);
+              const hostAvatar = storage.listAvatarsForSite(visit.hostSiteDid).find((a) => a.avatarDid === frame.from);
+              const isHost = Boolean(hostAvatar);
+              if ((auth.role === "visitor" && !isVisitor) || (auth.role === "host" && !isHost)) {
+                socket.send(JSON.stringify({ type: "error", code: "sender_role_mismatch" }));
+                return;
+              }
               const senderAvatar = isVisitor
                 ? storage.getAvatar(visit.visitorAvatarDid)
-                : (isHost ? storage.listAvatarsForSite(visit.hostSiteDid)[0] : undefined);
+                : hostAvatar;
 
               if (!senderAvatar) {
                 socket.send(JSON.stringify({ type: "error", code: "unknown_identity" }));
@@ -455,14 +789,32 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
                 socket.send(JSON.stringify({ type: "error", code: "bad_signature" }));
                 return;
               }
-
               const relayed: RelayedChatMessage = {
                 type: "chat.message", visit_id: visitId, seq: frame.seq,
                 from: frame.from, to: isVisitor ? visit.hostSiteDid : visit.visitorAvatarDid,
                 text: frame.text, untrusted: true, ts: frame.ts,
               };
+              if (!visit.grantedScopes.includes("chat:send") || !visit.grantedScopes.includes("chat:receive")) {
+                socket.send(JSON.stringify({ type: "error", code: "scope_denied" }));
+                return;
+              }
+              const now = Date.now();
+              const rateWindow = auth.role === "visitor" ? session.visitorTimes : session.hostTimes;
+              while (rateWindow[0] !== undefined && rateWindow[0] <= now - 60_000) rateWindow.shift();
+              if (rateWindow.length >= 6) {
+                socket.send(JSON.stringify({ type: "error", code: "rate_limited" }));
+                return;
+              }
+              if (session.messageCount >= 80) {
+                socket.send(JSON.stringify({ type: "error", code: "visit_limit" }));
+                return;
+              }
               const targetSocket = isVisitor ? session.host : session.visitor;
               targetSocket?.send(JSON.stringify(relayed));
+              auth.lastSeq = frame.seq;
+              session.lastSeqBySender.set(frame.from, frame.seq);
+              rateWindow.push(now);
+              session.messageCount += 1;
               storage.appendAudit("msg.relayed", frame.from, { visit_id: visitId, seq: frame.seq, chars: frame.text.length }, visitId);
             }
           } catch {
@@ -471,6 +823,8 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
         });
 
         socket.on("close", () => {
+          const expiryTimer = wsExpiryTimers.get(socket);
+          if (expiryTimer) clearTimeout(expiryTimer);
           if (session.visitor === socket) session.visitor = undefined;
           if (session.host === socket) session.host = undefined;
         });
@@ -480,13 +834,26 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
 
   // ===== Revocations =====
 
-  app.post<{ Body: { target_type: string; target_id: string; reason: string; effective_at?: string } }>(
+  app.post<{ Body: { target_type: string; target_id: string; reason: string; effective_at?: string; actor_site_did: string } }>(
     "/v1/revocations",
     async (request, reply) => {
       const body = request.body;
       if (!body?.target_type || !body.target_id || !body.reason) {
         return reply.status(400).send({ type: "invalid_request" });
       }
+      const actorSite = storage.getSite(body.actor_site_did);
+      if (!actorSite || !verifySiteRequest(request, actorSite)) return reply.status(401).send({ type: "invalid_signature" });
+      let ownsTarget = false;
+      if (body.target_type === "site") ownsTarget = actorSite.siteDid === body.target_id;
+      else if (body.target_type === "avatar") ownsTarget = storage.getAvatar(body.target_id)?.siteDid === actorSite.siteDid;
+      else if (body.target_type === "visit") {
+        const visit = storage.getVisit(body.target_id);
+        ownsTarget = visit?.homeSiteDid === actorSite.siteDid || visit?.hostSiteDid === actorSite.siteDid;
+      }
+      if (!["site", "avatar", "visit"].includes(body.target_type)) {
+        return reply.status(400).send({ type: "unsupported_target", detail: "Only site, avatar, and visit revocations are supported." });
+      }
+      if (!ownsTarget) return reply.status(403).send({ type: "forbidden", detail: "Site may revoke only identities or visits it owns." });
       const revocationId = `rev_${randomUUID()}`;
       storage.addRevocation({
         revocationId, targetType: body.target_type as "key" | "avatar" | "site" | "visit" | "token",
@@ -497,10 +864,15 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
       if (body.target_type === "visit" || body.target_type === "site" || body.target_type === "avatar") {
         for (const [visitId, session] of wsSessions) {
           const visit = storage.getVisit(visitId);
-          if (visit && (visit.visitId === body.target_id || visit.visitorAvatarDid === body.target_id || visit.homeSiteDid === body.target_id)) {
+          const hostAvatars = visit ? storage.listAvatarsForSite(visit.hostSiteDid) : [];
+          const revokedHostAvatar = body.target_type === "avatar" && hostAvatars.some((avatar) => avatar.avatarDid === body.target_id);
+          if (visit && (visit.visitId === body.target_id || visit.visitorAvatarDid === body.target_id ||
+              visit.homeSiteDid === body.target_id || visit.hostSiteDid === body.target_id || revokedHostAvatar)) {
             const msg = JSON.stringify({ type: "visit.ended", reason: "revoked" });
             session.visitor?.send(msg);
             session.host?.send(msg);
+            session.visitor?.close(4003, "revoked");
+            session.host?.close(4003, "revoked");
             storage.updateVisitStatus(visitId, "ended", "revoked", new Date().toISOString());
             wsSessions.delete(visitId);
           }
@@ -520,6 +892,8 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
   app.get<{ Querystring: { site_did?: string; from?: string; to?: string } }>(
     "/v1/audit",
     async (request, reply) => {
+      const site = request.query.site_did ? storage.getSite(request.query.site_did) : undefined;
+      if (!site || !verifySiteRequest(request, site)) return reply.status(401).send({ type: "invalid_signature" });
       const events = storage.listAudit(request.query.site_did, request.query.from, request.query.to);
       return reply.send({ events, chain_head: storage.getChainHead() });
     },
@@ -552,7 +926,22 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
     async (request, reply) => {
       const existing = storage.getProfile(request.params.did);
       if (!existing) return reply.status(404).send({ type: "not_found" });
-      storage.upsertProfile({ ...existing, ...request.body, avatarDid: request.params.did, updatedAt: new Date().toISOString() } as typeof existing);
+      if (!verifyOwnerRequest(request, request.params.did)) return reply.status(401).send({ type: "invalid_signature" });
+      const body = request.body;
+      if ((body.name !== undefined && (typeof body.name !== "string" || body.name.length < 1 || body.name.length > 100)) ||
+          (body.public_bio !== undefined && (typeof body.public_bio !== "string" || body.public_bio.length > 2000)) ||
+          (body.follow_policy !== undefined && !["open", "approve", "closed"].includes(body.follow_policy)) ||
+          (body.dm_policy !== undefined && !["request", "followers", "mutuals", "closed"].includes(body.dm_policy))) {
+        return reply.status(400).send({ type: "invalid_request", detail: "Invalid profile fields." });
+      }
+      storage.upsertProfile({
+        ...existing,
+        name: body.name ?? existing.name,
+        publicBio: body.public_bio ?? existing.publicBio,
+        followPolicy: (body.follow_policy as typeof existing.followPolicy | undefined) ?? existing.followPolicy,
+        dmPolicy: (body.dm_policy as typeof existing.dmPolicy | undefined) ?? existing.dmPolicy,
+        updatedAt: new Date().toISOString(),
+      });
       return reply.send({ status: "updated" });
     },
   );
@@ -568,6 +957,10 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
       }
       const avatar = storage.getAvatar(request.params.did);
       if (!avatar) return reply.status(404).send({ type: "not_found" });
+      if (!verifyOwnerRequest(request, request.params.did)) return reply.status(401).send({ type: "invalid_signature" });
+      if (!meterTenantUsage(request, "post.created", { avatar_did: request.params.did })) {
+        return reply.status(429).send({ type: "quota_exceeded", detail: "Tenant daily post quota exceeded" });
+      }
       const postId = `pst_${randomUUID()}`;
       storage.createPost({ postId, author: request.params.did, text: body.text, replyTo: body.reply_to, createdAt: new Date().toISOString(), signature: body.avatar_signature ?? "" });
       storage.addActivity({
@@ -594,6 +987,7 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
   app.delete<{ Params: { id: string }; Querystring: { author: string } }>(
     "/v1/posts/:id",
     async (request, reply) => {
+      if (!verifyOwnerRequest(request, request.query.author)) return reply.status(401).send({ type: "invalid_signature" });
       const deleted = storage.deletePost(request.params.id, request.query.author);
       if (!deleted) return reply.status(404).send({ type: "not_found" });
       return reply.send({ status: "deleted" });
@@ -607,8 +1001,12 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
     async (request, reply) => {
       const body = request.body;
       if (!body?.follower || !body.followee) return reply.status(400).send({ type: "invalid_request" });
+      if (!storage.getAvatar(body.follower)) return reply.status(404).send({ type: "not_found", detail: "Follower avatar not found" });
+      if (!verifyOwnerRequest(request, body.follower)) return reply.status(401).send({ type: "invalid_signature" });
       const followeeProfile = storage.getProfile(body.followee);
-      const status: "active" | "pending" = followeeProfile?.followPolicy === "open" ? "active" : "pending";
+      if (!followeeProfile) return reply.status(404).send({ type: "not_found", detail: "Followee avatar not found" });
+      if (followeeProfile.followPolicy === "closed") return reply.status(403).send({ type: "scope_denied", detail: "Follow requests are closed" });
+      const status: "active" | "pending" = followeeProfile.followPolicy === "open" ? "active" : "pending";
       const followId = `fol_${randomUUID()}`;
       storage.createFollow({ followId, follower: body.follower, followee: body.followee, status, createdAt: new Date().toISOString() });
       if (status === "active") {
@@ -625,6 +1023,10 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
   app.post<{ Params: { id: string }; Body: { decision: "accept" | "reject" } }>(
     "/v1/follows/:id/decision",
     async (request, reply) => {
+      const follow = storage.getFollowById(request.params.id);
+      if (!follow) return reply.status(404).send({ type: "not_found" });
+      if (request.body.decision !== "accept" && request.body.decision !== "reject") return reply.status(400).send({ type: "invalid_request" });
+      if (!verifyOwnerRequest(request, follow.followee)) return reply.status(401).send({ type: "invalid_signature" });
       storage.updateFollowStatus(request.params.id, request.body.decision === "accept" ? "active" : "rejected");
       return reply.send({ status: request.body.decision === "accept" ? "active" : "rejected" });
     },
@@ -636,11 +1038,68 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
     "/v1/dms/requests",
     async (request, reply) => {
       const body = request.body;
-      if (!body?.from || !body.to) return reply.status(400).send({ type: "invalid_request" });
+      if (!body?.from || !body.to || body.from === body.to || (body.intro?.length ?? 0) > 500) {
+        return reply.status(400).send({ type: "invalid_request" });
+      }
+      if (!storage.getAvatar(body.from)) return reply.status(404).send({ type: "not_found", detail: "Sender avatar not found" });
+      if (!verifyOwnerRequest(request, body.from)) return reply.status(401).send({ type: "invalid_signature" });
       const recipientProfile = storage.getProfile(body.to);
-      if (recipientProfile?.dmPolicy === "closed") return reply.status(403).send({ type: "scope_denied", detail: "DMs closed" });
-      const thread = storage.findOrCreateDmThread(body.from, body.to);
-      return reply.status(202).send({ req_id: thread.threadId, status: "pending", thread_id: thread.threadId });
+      if (!recipientProfile) return reply.status(404).send({ type: "not_found", detail: "Recipient avatar not found" });
+      if (recipientProfile.dmPolicy === "closed") return reply.status(403).send({ type: "scope_denied", detail: "DMs closed" });
+      const follows = storage.getFollow(body.from, body.to)?.status === "active";
+      const mutuals = follows && storage.getFollow(body.to, body.from)?.status === "active";
+      if (recipientProfile.dmPolicy === "followers" && !follows) {
+        return reply.status(403).send({ type: "scope_denied", detail: "Recipient only accepts DMs from followers" });
+      }
+      if (recipientProfile.dmPolicy === "mutuals" && !mutuals) {
+        return reply.status(403).send({ type: "scope_denied", detail: "Recipient only accepts DMs from mutual follows" });
+      }
+      if (!meterTenantUsage(request, "dm.sent", { from: body.from, to: body.to })) {
+        return reply.status(429).send({ type: "quota_exceeded", detail: "Tenant daily DM request quota exceeded" });
+      }
+      const accepted = recipientProfile.dmPolicy === "followers" || recipientProfile.dmPolicy === "mutuals";
+      const thread = storage.findOrCreateDmThread(body.from, body.to, body.intro ?? "", accepted);
+      if (thread.status === "rejected") return reply.status(403).send({ type: "scope_denied", detail: "This DM request was rejected" });
+      return reply.status(202).send({ req_id: thread.threadId, status: thread.status, thread_id: thread.threadId });
+    },
+  );
+
+  app.get<{ Querystring: { agent_did?: string } }>("/v1/dms", async (request, reply) => {
+    const agentDid = request.query.agent_did;
+    if (!agentDid) return reply.status(400).send({ type: "invalid_request", detail: "agent_did is required" });
+    if (!storage.getAvatar(agentDid)) return reply.status(404).send({ type: "not_found" });
+    if (!verifyOwnerRequest(request, agentDid)) return reply.status(401).send({ type: "invalid_signature" });
+    return reply.send({ threads: storage.listDmThreads(agentDid) });
+  });
+
+  app.post<{ Params: { id: string }; Body: { agent_did: string; decision: "accept" | "reject" } }>(
+    "/v1/dms/:id/decision",
+    async (request, reply) => {
+      const thread = storage.getDmThread(request.params.id);
+      if (!thread) return reply.status(404).send({ type: "not_found" });
+      if (request.body?.agent_did !== thread.participant2) {
+        return reply.status(403).send({ type: "scope_denied", detail: "Only the recipient can decide a DM request" });
+      }
+      if (!verifyOwnerRequest(request, thread.participant2)) return reply.status(401).send({ type: "invalid_signature" });
+      if (thread.status !== "pending") return reply.status(409).send({ type: "invalid_state", detail: "DM request is no longer pending" });
+      const decision = request.body.decision;
+      if (decision !== "accept" && decision !== "reject") return reply.status(400).send({ type: "invalid_request" });
+      storage.setDmThreadStatus(thread.threadId, decision === "accept" ? "accepted" : "rejected");
+      return reply.send({ thread_id: thread.threadId, status: decision === "accept" ? "accepted" : "rejected" });
+    },
+  );
+
+  app.get<{ Params: { id: string }; Querystring: { agent_did?: string } }>(
+    "/v1/dms/:id/messages",
+    async (request, reply) => {
+      const thread = storage.getDmThread(request.params.id);
+      if (!thread) return reply.status(404).send({ type: "not_found" });
+      const agentDid = request.query.agent_did;
+      if (agentDid !== thread.participant1 && agentDid !== thread.participant2) {
+        return reply.status(403).send({ type: "scope_denied", detail: "Only thread participants can read messages" });
+      }
+      if (!verifyOwnerRequest(request, agentDid)) return reply.status(401).send({ type: "invalid_signature" });
+      return reply.send({ thread_id: thread.threadId, status: thread.status, intro: thread.intro, messages: storage.getDmMessages(thread.threadId) });
     },
   );
 
@@ -648,7 +1107,16 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
     "/v1/dms/:id/messages",
     async (request, reply) => {
       const body = request.body;
-      if (!body?.text || !body.from) return reply.status(400).send({ type: "invalid_request" });
+      if (!body?.text || body.text.length > 1000 || !body.from || !Number.isSafeInteger(body.seq) || body.seq < 1) {
+        return reply.status(400).send({ type: "invalid_request" });
+      }
+      const thread = storage.getDmThread(request.params.id);
+      if (!thread) return reply.status(404).send({ type: "not_found" });
+      if (body.from !== thread.participant1 && body.from !== thread.participant2) {
+        return reply.status(403).send({ type: "scope_denied", detail: "Only thread participants can send messages" });
+      }
+      if (!verifyOwnerRequest(request, body.from)) return reply.status(401).send({ type: "invalid_signature" });
+      if (thread.status !== "accepted") return reply.status(403).send({ type: "scope_denied", detail: "DM request must be accepted first" });
       const messageId = `dmm_${randomUUID()}`;
       storage.addDmMessage({
         messageId, threadId: request.params.id, from: body.from,
@@ -675,6 +1143,14 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
   app.post<{ Body: { name: string; plan?: string } }>(
     "/v1/tenants",
     async (request, reply) => {
+      if (!opts.tenantAdminKey) return reply.status(503).send({ type: "tenant_provisioning_disabled" });
+      const adminHeader = request.headers["x-tenant-admin-key"];
+      const provided = Buffer.from(typeof adminHeader === "string" ? adminHeader : "");
+      const configured = Buffer.from(opts.tenantAdminKey);
+      if (configured.length < 32) return reply.status(503).send({ type: "tenant_admin_key_misconfigured" });
+      if (provided.length !== configured.length || !timingSafeEqual(provided, configured)) {
+        return reply.status(401).send({ type: "unauthorized" });
+      }
       const body = request.body;
       if (!body?.name) return reply.status(400).send({ type: "invalid_request", detail: "name required" });
       const plan = (body.plan ?? "starter") as TenantRecord["plan"];
@@ -737,7 +1213,7 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
     storage,
     gatewayIdentity,
     async start() {
-      const address = await app.listen({ port: opts.port ?? 4100, host: "0.0.0.0" });
+      const address = await app.listen({ port: opts.port ?? 4100, host: opts.host ?? "127.0.0.1" });
       return address;
     },
     async stop() {

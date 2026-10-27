@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, createPublicKey, randomUUID } from "node:crypto";
 import { signPayload, verifyPayload } from "./identity.js";
 import { GATEWAY_MAX_SCOPES, type Scope } from "./policy.js";
 
@@ -16,6 +16,18 @@ export interface IssueVisitTokenOptions {
   ttlSeconds?: number; nowSeconds?: number;
 }
 
+/** SHA-256 thumbprint of an Ed25519 SPKI public key, base64url encoded. */
+export function proofKeyThumbprint(publicKeyPem: string): string {
+  const key = createPublicKey(publicKeyPem);
+  if (key.asymmetricKeyType !== "ed25519") throw new TypeError("Proof key must be Ed25519.");
+  return `sha256:${createHash("sha256").update(key.export({ format: "der", type: "spki" })).digest("base64url")}`;
+}
+
+/** Canonical payload signed by the ephemeral proof key during HTTP/WebSocket authentication. */
+export function proofSignaturePayload(method: string, path: string, value: string, timestamp: string, nonce: string): string {
+  return `${method.toUpperCase()} ${path}\n${timestamp}\n${nonce}\n${value}`;
+}
+
 export class TokenValidationError extends Error {
   constructor(readonly code: "invalid_token" | "token_expired" | "wrong_audience" | "replay_detected") {
     super(code.replaceAll("_", " "));
@@ -30,6 +42,7 @@ export class JtiReplayCache {
   consume(jti: string, expiresAtSeconds: number, nowSeconds = Math.floor(Date.now() / 1000)): boolean {
     for (const [knownJti, expiry] of this.seen) if (expiry <= nowSeconds) this.seen.delete(knownJti);
     if (this.seen.has(jti)) return false;
+    if (this.seen.size >= 100_000) return false;
     this.seen.set(jti, expiresAtSeconds);
     return true;
   }
@@ -69,6 +82,7 @@ export function verifyVisitToken(
   expectedAudience: string,
   replayCache: JtiReplayCache,
   nowSeconds = Math.floor(Date.now() / 1000),
+  consumeJti = true,
 ): VisitTokenClaims {
   const parts = token.split(".");
   if (parts.length !== 3) throw new TokenValidationError("invalid_token");
@@ -85,7 +99,9 @@ export function verifyVisitToken(
     if (claims.exp <= claims.iat || claims.nbf > claims.exp || claims.iat > claims.nbf || claims.exp - claims.iat > MAX_TOKEN_TTL_SECONDS) {
       throw new TokenValidationError("invalid_token");
     }
-    if (!replayCache.consume(claims.jti, claims.exp, nowSeconds)) throw new TokenValidationError("replay_detected");
+    if (consumeJti && !replayCache.consume(claims.jti, claims.exp, nowSeconds)) {
+      throw new TokenValidationError("replay_detected");
+    }
     return claims;
   } catch (error) {
     if (error instanceof TokenValidationError) throw error;

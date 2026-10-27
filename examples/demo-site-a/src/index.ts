@@ -10,7 +10,7 @@
  */
 
 import Fastify from "fastify";
-import { generateIdentity, signPayload } from "@avatar-gateway/gateway";
+import { generateIdentity, proofKeyThumbprint, proofSignaturePayload, signPayload } from "@avatar-gateway/gateway";
 import { AvatarRuntime, MockProvider } from "@avatar-gateway/avatar-runtime";
 import { randomUUID } from "node:crypto";
 import WebSocket from "ws";
@@ -44,7 +44,7 @@ function signRequest(method: string, path: string, body: string): Record<string,
   const ts = new Date().toISOString();
   const nonce = randomUUID();
   const sig = signPayload(`${method.toUpperCase()} ${path}\n${ts}\n${nonce}\n${body}`, siteIdentity.privateKeyPem);
-  return { "Content-Type": "application/json", "x-ag-ts": ts, "x-ag-nonce": nonce, "x-ag-sig": sig };
+  return { "Content-Type": "application/json", "x-ag-site-did": siteIdentity.did, "x-ag-ts": ts, "x-ag-nonce": nonce, "x-ag-sig": sig };
 }
 
 async function gatewayPost(path: string, body: unknown): Promise<unknown> {
@@ -93,7 +93,10 @@ async function visitSiteB(): Promise<void> {
     purpose: "Say hi and learn about their projects",
     nonce: randomUUID(),
     ts: new Date().toISOString(),
-  }) as { visit_id?: string; granted_scopes?: string[]; visit_grant?: string };
+  }) as {
+    visit_id?: string; granted_scopes?: string[]; visit_grant?: string;
+    grant_expires_at?: string; _grant_meta?: string;
+  };
 
   if (!visitResponse.visit_id) {
     console.error("[Site A] Visit request failed:", visitResponse);
@@ -104,11 +107,24 @@ async function visitSiteB(): Promise<void> {
   console.log(`[Site A] Visit ${visitId} granted with scopes: ${visitResponse.granted_scopes?.join(", ")}`);
 
   // Exchange for token
+  const proofIdentity = generateIdentity();
+  const proofThumbprint = proofKeyThumbprint(proofIdentity.publicKeyPem);
+  const proofTs = new Date().toISOString();
+  const proofNonce = randomUUID();
+  const proofValue = `${visitResponse.visit_grant}:${visitResponse.grant_expires_at}:${proofThumbprint}`;
   const tokenResponse = await gatewayPost("/v1/tokens/exchange", {
     visit_grant: visitResponse.visit_grant,
-    pop_key_thumbprint: `sha256:${avatarIdentity.did.slice(-16)}`,
+    grant_expires_at: visitResponse.grant_expires_at,
+    _grant_meta: visitResponse._grant_meta,
     visit_id: visitId,
     visitor_avatar_did: avatarIdentity.did,
+    proof_public_key: proofIdentity.publicKeyPem,
+    proof_ts: proofTs,
+    proof_nonce: proofNonce,
+    proof_sig: signPayload(
+      proofSignaturePayload("POST", "/v1/tokens/exchange", proofValue, proofTs, proofNonce),
+      proofIdentity.privateKeyPem,
+    ),
   }) as { visit_token?: string; session_url?: string };
 
   if (!tokenResponse.visit_token) {
@@ -119,8 +135,25 @@ async function visitSiteB(): Promise<void> {
   console.log(`[Site A] Visit token obtained. Connecting to relay...`);
 
   // Connect WebSocket
-  const wsUrl = `ws://localhost:4100${tokenResponse.session_url}`;
-  const ws = new WebSocket(wsUrl, { headers: { "x-ag-role": "visitor" } });
+  const gatewayWs = new URL(GATEWAY_URL);
+  gatewayWs.protocol = gatewayWs.protocol === "https:" ? "wss:" : "ws:";
+  const wsPath = tokenResponse.session_url ?? `/v1/visits/${visitId}/session`;
+  const wsUrl = new URL(wsPath, gatewayWs).toString();
+  const wsTs = new Date().toISOString();
+  const wsNonce = randomUUID();
+  const ws = new WebSocket(wsUrl, {
+    headers: {
+      "x-ag-role": "visitor",
+      authorization: `Bearer ${tokenResponse.visit_token}`,
+      "x-ag-pop-key": Buffer.from(proofIdentity.publicKeyPem).toString("base64url"),
+      "x-ag-pop-ts": wsTs,
+      "x-ag-pop-nonce": wsNonce,
+      "x-ag-pop-sig": signPayload(
+        proofSignaturePayload("GET", wsPath, tokenResponse.visit_token!, wsTs, wsNonce),
+        proofIdentity.privateKeyPem,
+      ),
+    },
+  });
 
   let seq = 0;
 
