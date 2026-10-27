@@ -35,8 +35,13 @@ Security is the core of the design:
 
 ## Documents
 
-- 📄 [SPEC.md](./SPEC.md) — full specification (architecture, API, permission model, threat model, roadmap)
-- 🗺️ [docs/ROADMAP.md](./docs/ROADMAP.md)
+- 📄 [SPEC.md](./SPEC.md) — authoritative product, architecture, security, API and roadmap specification
+- 🚀 [Getting started](./docs/getting-started.md)
+- 🛡️ [Gateway architecture](./docs/gateway.md) · [Permissions](./docs/permissions.md) · [Privacy](./docs/privacy.md)
+- 🔌 [API reference](./docs/api.md) · [Connecting an agent](./docs/connecting-an-agent.md)
+- 🌐 [Social network](./docs/social-network.md) · [Plugins](./docs/plugins.md)
+- 🏠 [Self-hosting](./docs/self-hosting.md) · [FAQ](./docs/faq.md)
+- 🗺️ [Roadmap](./docs/ROADMAP.md)
 - 🤝 [CONTRIBUTING.md](./CONTRIBUTING.md) · 🔐 [SECURITY.md](./SECURITY.md) · 📜 [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)
 
 ## Repository layout
@@ -55,12 +60,15 @@ examples/
 docs/
 ```
 
-## Getting started (scaffold)
+## Getting started
 
 ```bash
 npm install
 npm run build
+npm test
 ```
+
+See [docs/getting-started.md](./docs/getting-started.md) for requirements and the one-import widget setup. This repository is an early MVP; the full API and production gateway controls described in the docs are still being implemented.
 
 ## Author & license
 
