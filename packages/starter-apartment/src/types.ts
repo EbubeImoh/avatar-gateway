@@ -1,93 +1,108 @@
-/**
- * @avatar-gateway/starter-apartment — typed configuration for the apartment scene.
- *
- * Defaults replicate the "lives its day" apartment from Ebube Imoh's portfolio
- * (https://www.ebubeimoh.com/) — a Lego-style brick avatar at a desk in Lagos.
- * Swap any value through ApartmentConfig to build your own scene.
- *
- * Asset licence: the default avatar SVG and room artwork are original, created
- * for avatar-gateway (Apache-2.0). Any assets you add must be your own or
- * openly licensed; note their licence in your config's `assetCredits` field.
- */
+/** Typed configuration for the generic Shubur Starter Apartment. */
 
 export interface AvatarLook {
-  /** Skin-tone hex color (default: warm amber #ffd466 matching the landing page art). */
   skinTone: string;
-  /** Hair color hex (default: #172320 dark). */
   hairColor: string;
-  /** Primary outfit/shirt color hex (default: #315bff blue). */
   outfitColor: string;
-  /** Trousers/lower-body color hex (default: #27352f dark green). */
   trouserColor: string;
-  /** Accessories: "glasses" | "headphones" | "hat" | "none". */
   accessories: AvatarAccessory[];
-  /** Display name shown in captions. */
   name: string;
 }
 
 export type AvatarAccessory = "glasses" | "headphones" | "hat" | "none";
 
 export interface RoomTheme {
-  /** Wall color hex (default: #f0ecd8 warm off-white). */
   wallColor: string;
-  /** Floor color hex (default: #c9b98a warm wood). */
   floorColor: string;
-  /** Accent / trim color hex (default: #315bff blue, matching the avatar). */
   accentColor: string;
-  /** Window daylight tint (default: #eafacc pale green-yellow, like the landing art). */
   windowDaytimeColor: string;
-  /** Window night tint (default: #1a1f35 deep navy). */
   windowNightColor: string;
 }
 
-export interface FurnitureConfig {
+export type RoomId = "studio" | "living" | "kitchen" | "bedroom" | "bathroom" | "gym" | "garage";
+
+export type FurnitureKind =
+  | "desk" | "bed" | "bookshelf" | "plant" | "window" | "floorLamp" | "coffeeTable"
+  | "sofa" | "island" | "sink" | "shower" | "mirror" | "weights" | "mat" | "car" | "toolShelf";
+
+export interface ApartmentRoom {
+  id: RoomId;
+  name: string;
+  /** Furniture and props to draw in this room. Global furniture flags can hide any item. */
+  furniture: FurnitureKind[];
+  wallColor?: string;
+  floorColor?: string;
+}
+
+export interface ApartmentLayout {
+  /** Room shown when no routine activity specifies a room. */
+  startRoom: RoomId;
+  /** Ordered room list shown in the navigation controls. */
+  rooms: ApartmentRoom[];
+}
+
+export interface ApartmentProp {
+  id: string;
+  room: RoomId;
+  kind: FurnitureKind;
+  label: string;
+  /** Position inside the room, as a percentage from 0 to 100. */
+  x: number;
+  y: number;
+  scale?: number;
+  color?: string;
+}
+
+export interface FurnitureConfig extends Record<FurnitureKind, boolean> {
   desk: boolean;
   bed: boolean;
   bookshelf: boolean;
   plant: boolean;
   window: boolean;
-  /** Floor lamp in the corner. */
   floorLamp: boolean;
-  /** Small coffee table. */
   coffeeTable: boolean;
+  sofa: boolean;
+  island: boolean;
+  sink: boolean;
+  shower: boolean;
+  mirror: boolean;
+  weights: boolean;
+  mat: boolean;
+  car: boolean;
+  toolShelf: boolean;
 }
 
 export type DayPeriod = "dawn" | "morning" | "noon" | "afternoon" | "evening" | "night";
 
 export interface DayActivity {
-  /** 24-hour local time start (0–23). */
+  /** 24-hour local start time, inclusive. */
   startHour: number;
-  /** 24-hour local time end (0–23, exclusive). */
+  /** 24-hour local end time, exclusive; 24 is allowed for the final interval. */
   endHour: number;
-  /** Machine-readable activity key. */
   activity: AvatarActivity;
-  /** Human-readable caption shown under the scene. */
   caption: string;
+  room?: RoomId;
 }
 
-export type AvatarActivity =
-  | "sleeping"
-  | "waking"
-  | "coffee"
-  | "working"
-  | "reading"
-  | "stretching"
-  | "idle"
-  | "walking";
+export type AvatarActivity = "sleeping" | "waking" | "coffee" | "working" | "reading" | "stretching" | "idle" | "walking";
 
 export interface DayCycleConfig {
-  /** Enable automatic activity switching based on local time. Default: true. */
   enabled: boolean;
-  /** IANA timezone for interpreting the local time. Default: "Africa/Lagos". */
   timezone: string;
-  /** Activities in order. Earlier startHour wins. */
   activities: DayActivity[];
 }
 
+export interface LightingConfig {
+  ambientDayColor: string;
+  ambientNightColor: string;
+  nightDimOpacity: number;
+  glowColor: string;
+}
+
 export interface GatewayMount {
-  /** If set, Avatar.mount is called after the scene renders with this selector. */
+  /** Selector for the existing element where Avatar.mount should render. */
   selector: string;
-  /** Backend URL passed to Avatar.mount (e.g. "/avatar-gateway"). */
+  /** Same-origin backend path passed to Avatar.mount. */
   backendUrl: string;
 }
 
@@ -95,52 +110,41 @@ export interface ApartmentConfig {
   avatar?: Partial<AvatarLook>;
   room?: Partial<RoomTheme>;
   furniture?: Partial<FurnitureConfig>;
+  layout?: Partial<ApartmentLayout>;
+  props?: ApartmentProp[];
+  lighting?: Partial<LightingConfig>;
   dayCycle?: Partial<DayCycleConfig>;
-  /** If provided, Avatar.mount is wired up after the scene renders. */
   gateway?: GatewayMount;
-  /** Free-form licence notes for any custom assets you add. */
   assetCredits?: string;
 }
 
-/** Fully-resolved config after merging with defaults. */
 export interface ResolvedApartmentConfig {
   avatar: AvatarLook;
   room: RoomTheme;
   furniture: FurnitureConfig;
+  layout: ApartmentLayout;
+  props: ApartmentProp[];
+  lighting: LightingConfig;
   dayCycle: DayCycleConfig;
   gateway?: GatewayMount;
   assetCredits?: string;
 }
 
-/** The ebube-inspired default schedule (WAT = UTC+1, Africa/Lagos). */
-export const DEFAULT_ACTIVITIES: DayActivity[] = [
-  { startHour: 0, endHour: 6,  activity: "sleeping",   caption: "Sound asleep"           },
-  { startHour: 6, endHour: 7,  activity: "waking",     caption: "Rising slowly"           },
-  { startHour: 7, endHour: 9,  activity: "coffee",     caption: "Morning coffee"          },
-  { startHour: 9, endHour: 13, activity: "working",    caption: "Deep work session"       },
-  { startHour: 13, endHour: 14, activity: "idle",      caption: "Lunch break"             },
-  { startHour: 14, endHour: 18, activity: "working",   caption: "Building things"         },
-  { startHour: 18, endHour: 19, activity: "stretching", caption: "End-of-day stretch"     },
-  { startHour: 19, endHour: 21, activity: "reading",   caption: "Reading time"            },
-  { startHour: 21, endHour: 23, activity: "idle",      caption: "Winding down"            },
-  { startHour: 23, endHour: 24, activity: "sleeping",  caption: "Off to sleep"            },
-];
-
 export const DEFAULT_AVATAR_LOOK: AvatarLook = {
-  skinTone: "#ffd466",
-  hairColor: "#172320",
-  outfitColor: "#315bff",
-  trouserColor: "#27352f",
-  accessories: ["none"],
-  name: "Your avatar",
+  skinTone: "#d99b63",
+  hairColor: "#252b31",
+  outfitColor: "#4361b5",
+  trouserColor: "#34464d",
+  accessories: [],
+  name: "My Avatar",
 };
 
 export const DEFAULT_ROOM_THEME: RoomTheme = {
-  wallColor: "#f0ecd8",
-  floorColor: "#c9b98a",
-  accentColor: "#315bff",
-  windowDaytimeColor: "#eafacc",
-  windowNightColor: "#1a1f35",
+  wallColor: "#ddd9cb",
+  floorColor: "#ad9875",
+  accentColor: "#597b72",
+  windowDaytimeColor: "#b7d7dc",
+  windowNightColor: "#222f4d",
 };
 
 export const DEFAULT_FURNITURE: FurnitureConfig = {
@@ -150,8 +154,51 @@ export const DEFAULT_FURNITURE: FurnitureConfig = {
   plant: true,
   window: true,
   floorLamp: true,
-  coffeeTable: false,
+  coffeeTable: true,
+  sofa: true,
+  island: true,
+  sink: true,
+  shower: true,
+  mirror: true,
+  weights: true,
+  mat: true,
+  car: true,
+  toolShelf: true,
 };
+
+export const DEFAULT_LAYOUT: ApartmentLayout = {
+  startRoom: "studio",
+  rooms: [
+    { id: "studio", name: "Studio", furniture: ["window", "plant", "desk", "bookshelf"] },
+    { id: "living", name: "Living room", furniture: ["window", "plant", "sofa", "coffeeTable", "floorLamp"] },
+    { id: "kitchen", name: "Kitchen", furniture: ["window", "island", "plant"] },
+    { id: "bedroom", name: "Bedroom", furniture: ["window", "bed", "bookshelf", "floorLamp"] },
+    { id: "bathroom", name: "Bathroom", furniture: ["sink", "shower", "mirror"] },
+    { id: "gym", name: "Gym", furniture: ["window", "weights", "mat"] },
+    { id: "garage", name: "Garage", furniture: ["car", "toolShelf"] },
+  ],
+};
+
+export const DEFAULT_LIGHTING: LightingConfig = {
+  ambientDayColor: "#fff3d2",
+  ambientNightColor: "#182036",
+  nightDimOpacity: 0.42,
+  glowColor: "#ffe7a3",
+};
+
+/** A generic daily routine inspired by the author's portfolio apartment. */
+export const DEFAULT_ACTIVITIES: DayActivity[] = [
+  { startHour: 0, endHour: 6, activity: "sleeping", caption: "Sound asleep", room: "bedroom" },
+  { startHour: 6, endHour: 7, activity: "waking", caption: "Waking up slowly", room: "bedroom" },
+  { startHour: 7, endHour: 9, activity: "coffee", caption: "Making a cup of coffee", room: "kitchen" },
+  { startHour: 9, endHour: 13, activity: "working", caption: "A focused work session", room: "studio" },
+  { startHour: 13, endHour: 14, activity: "idle", caption: "Taking a lunch break", room: "kitchen" },
+  { startHour: 14, endHour: 18, activity: "working", caption: "Back to building things", room: "studio" },
+  { startHour: 18, endHour: 19, activity: "stretching", caption: "Time to stretch", room: "gym" },
+  { startHour: 19, endHour: 21, activity: "reading", caption: "Reading for a while", room: "living" },
+  { startHour: 21, endHour: 23, activity: "idle", caption: "Winding down for the day", room: "living" },
+  { startHour: 23, endHour: 24, activity: "sleeping", caption: "Heading to bed", room: "bedroom" },
+];
 
 export const DEFAULT_DAY_CYCLE: DayCycleConfig = {
   enabled: true,

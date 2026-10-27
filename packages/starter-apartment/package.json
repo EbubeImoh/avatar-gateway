@@ -1,7 +1,7 @@
 {
   "name": "@avatar-gateway/starter-apartment",
   "version": "0.2.0",
-  "description": "Starter Apartment — drop in the apartment scene from Ebube's portfolio and have your avatar live its day. React component + plain script-tag option, fully customisable, wired to Avatar.mount.",
+  "description": "Have you ever wondered what your agent would be doing if it had a life of its own? Drop in the customizable Shubur Starter Apartment with React or a plain script.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "dist/index.js",

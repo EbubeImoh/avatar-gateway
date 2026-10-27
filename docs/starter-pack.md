@@ -1,190 +1,116 @@
-# Starter Apartment
+# Shubur Starter Apartment
 
-`@avatar-gateway/starter-apartment` is a drop-in apartment scene for your portfolio site — a Lego-style brick avatar living its day at a desk, recreating the "lives its day" concept from [Ebube Imoh's portfolio](https://www.ebubeimoh.com/).
+Have you ever wondered what your agent would be doing if it had a life of its own?
 
-The scene is fully customisable via a typed `ApartmentConfig`: change the avatar look, room colours, furniture, lighting, timezone, and day-cycle activities. It ships with a React component and a plain `mount()` function, and is designed to wire directly into `Avatar.mount` from `@avatar-gateway/sdk`.
+`@avatar-gateway/starter-apartment` is a generic multi-room apartment for an avatar. It keeps the live-style room scene, brick-inspired avatar, and local day-cycle experience while removing personal names, photos, projects, links, contact details, and private configuration.
 
-## Installation
+The package source is a generic derivative of the author's portfolio apartment experience. Its code and artwork are Apache-2.0; see the package [README](../packages/starter-apartment/README.md) and repository [LICENSE](../LICENSE).
+
+## Install
 
 ```bash
 npm install @avatar-gateway/starter-apartment
 ```
 
-React peer dependency is optional — the package works without React via the plain `mount()` API.
+The package is in this v0.2 source tree; npm publication is still pending.
 
-## Quick start
-
-### React
+## React
 
 ```tsx
-import { ApartmentScene } from '@avatar-gateway/starter-apartment/react';
+import { Avatar } from "@avatar-gateway/sdk";
+import { ApartmentScene } from "@avatar-gateway/starter-apartment/react";
 
-export function MyPortfolio() {
+export function AvatarHome() {
   return (
     <ApartmentScene
-      config={{
-        avatar: { name: 'Mira', outfitColor: '#9b5de5' },
-        dayCycle: { timezone: 'America/New_York' },
-      }}
+      config={{ avatar: { name: "My Avatar" }, dayCycle: { timezone: "Africa/Lagos" } }}
+      onAvatarMount={(element) => Avatar.mount(element, { backend: "/avatar-gateway" })}
     />
   );
 }
 ```
 
-### Plain script tag
+The apartment updates its local clock every minute, exposes accessible room buttons, and cleans up the mounted `Avatar` widget when it unmounts.
+
+## Plain script
 
 ```html
-<div id="my-apartment"></div>
-<script src="node_modules/@avatar-gateway/starter-apartment/dist/index.js" type="module"></script>
+<div id="apartment"></div>
+<div id="avatar-widget"></div>
 <script type="module">
-  import { mount } from '@avatar-gateway/starter-apartment';
-  mount('#my-apartment', {
-    avatar: { name: 'Mira' },
-    dayCycle: { timezone: 'America/New_York' },
+  import { mount } from "/node_modules/@avatar-gateway/starter-apartment/dist/index.js";
+  import { Avatar } from "/node_modules/@avatar-gateway/sdk/dist/index.js";
+  globalThis.Avatar = Avatar;
+
+  const apartment = mount("#apartment", {
+    avatar: { name: "My Avatar" },
+    gateway: { selector: "#avatar-widget", backendUrl: "/avatar-gateway" },
   });
+  // Call apartment.destroy() when removing the page scene.
 </script>
 ```
 
-### Wired to Avatar.mount
+The example uses a development/static server that exposes the installed package paths. A bundler can import the package names directly.
+
+## Configuration
+
+`ApartmentConfig` is typed and all fields are optional. Defaults use a neutral avatar name and styling, a Lagos timezone, a daily routine, and seven rooms: studio, living room, kitchen, bedroom, bathroom, gym, and garage.
 
 ```ts
-import { mount } from '@avatar-gateway/starter-apartment';
+import type { ApartmentConfig } from "@avatar-gateway/starter-apartment";
 
-mount('#my-apartment', {
-  avatar: { name: 'My Bot' },
-  gateway: {
-    selector: '#avatar-widget',
-    backendUrl: '/avatar-gateway',
+const config: ApartmentConfig = {
+  avatar: {
+    name: "My Avatar",
+    skinTone: "#d99b63",
+    hairColor: "#252b31",
+    outfitColor: "#4361b5",
+    trouserColor: "#34464d",
+    accessories: ["glasses"],
   },
-});
-```
-
-## Configuration reference
-
-### `ApartmentConfig`
-
-All fields are optional — defaults reproduce Ebube's apartment (Lagos timezone, blue shirt, brick avatar at a desk).
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `avatar` | `Partial<AvatarLook>` | Avatar appearance |
-| `room` | `Partial<RoomTheme>` | Wall/floor/accent colors |
-| `furniture` | `Partial<FurnitureConfig>` | Toggle furniture items on/off |
-| `dayCycle` | `Partial<DayCycleConfig>` | Day-cycle activities and timezone |
-| `gateway` | `GatewayMount` | Wire `Avatar.mount` after render |
-| `assetCredits` | `string` | Licence notes for custom assets |
-
-### `AvatarLook`
-
-```ts
-{
-  skinTone: string;        // hex, default: #ffd466 (warm amber)
-  hairColor: string;       // hex, default: #172320 (dark)
-  outfitColor: string;     // hex, default: #315bff (blue)
-  trouserColor: string;    // hex, default: #27352f (dark green)
-  accessories: AvatarAccessory[]; // "glasses" | "headphones" | "hat" | "none"
-  name: string;            // caption name
-}
-```
-
-### `RoomTheme`
-
-```ts
-{
-  wallColor: string;             // default: #f0ecd8
-  floorColor: string;            // default: #c9b98a
-  accentColor: string;           // default: #315bff
-  windowDaytimeColor: string;    // default: #eafacc
-  windowNightColor: string;      // default: #1a1f35
-}
-```
-
-### `FurnitureConfig`
-
-```ts
-{
-  desk: boolean;       // default: true
-  bed: boolean;        // default: true
-  bookshelf: boolean;  // default: true
-  plant: boolean;      // default: true
-  window: boolean;     // default: true
-  floorLamp: boolean;  // default: true
-  coffeeTable: boolean; // default: false
-}
-```
-
-### `DayCycleConfig`
-
-```ts
-{
-  enabled: boolean;       // default: true — auto-switch by local time
-  timezone: string;       // IANA, default: "Africa/Lagos"
-  activities: DayActivity[];
-}
-
-interface DayActivity {
-  startHour: number;  // 0–23
-  endHour: number;    // 0–23 exclusive
-  activity: AvatarActivity;
-  caption: string;
-}
-
-type AvatarActivity =
-  | "sleeping" | "waking" | "coffee" | "working"
-  | "reading" | "stretching" | "idle" | "walking";
-```
-
-Default activities cover the full 24-hour day with a Lagos developer's schedule.
-
-## Day cycle
-
-When `dayCycle.enabled` is `true` (default), the scene reads the current time in the configured timezone and picks the matching activity from `activities`. The React component updates every minute; the plain `mount()` function does too.
-
-The scene also adjusts the room's ambient light (window colour, lamp glow, night overlay) based on the time of day.
-
-## Customising activities
-
-Replace the full `activities` array to define your own schedule:
-
-```ts
-import { mount } from '@avatar-gateway/starter-apartment';
-
-mount('#home', {
-  dayCycle: {
-    timezone: 'Europe/London',
-    activities: [
-      { startHour: 0,  endHour: 8,  activity: 'sleeping',  caption: 'Offline' },
-      { startHour: 8,  endHour: 12, activity: 'working',   caption: 'Morning build' },
-      { startHour: 12, endHour: 13, activity: 'idle',      caption: 'Lunch' },
-      { startHour: 13, endHour: 18, activity: 'working',   caption: 'Afternoon build' },
-      { startHour: 18, endHour: 24, activity: 'reading',   caption: 'Evening' },
+  layout: {
+    startRoom: "studio",
+    rooms: [
+      { id: "studio", name: "Studio", furniture: ["window", "desk", "bookshelf"] },
+      { id: "living", name: "Living room", furniture: ["sofa", "coffeeTable", "plant"] },
     ],
   },
-});
+  furniture: { desk: true, plant: false },
+  props: [
+    { id: "studio-lamp", room: "studio", kind: "floorLamp", label: "Reading lamp", x: 72, y: 46, scale: 0.8 },
+  ],
+  room: { wallColor: "#ddd9cb", accentColor: "#597b72" },
+  lighting: { ambientNightColor: "#182036", nightDimOpacity: 0.42, glowColor: "#ffe7a3" },
+  dayCycle: {
+    enabled: true,
+    timezone: "Europe/London",
+    activities: [
+      { startHour: 0, endHour: 8, activity: "sleeping", caption: "Offline", room: "living" },
+      { startHour: 8, endHour: 12, activity: "working", caption: "Morning build", room: "studio" },
+      { startHour: 12, endHour: 13, activity: "idle", caption: "Lunch", room: "living" },
+      { startHour: 13, endHour: 18, activity: "working", caption: "Afternoon build", room: "studio" },
+      { startHour: 18, endHour: 24, activity: "reading", caption: "Evening", room: "living" },
+    ],
+  },
+};
 ```
 
-## Asset licences
+Rooms must have unique supported IDs. Activity intervals must be contiguous whole hours covering 0–24. A custom room layout may be smaller than the default; default activity rooms fall back to `startRoom`. Explicit activity room references must exist in the supplied layout. Colors are six-digit hex. Prop positions are percentages; labels are rendered as escaped text.
 
-The default avatar SVG and room artwork are original, created for avatar-gateway and licensed Apache-2.0. They are directly inspired by the brick/minifig art style on Ebube Imoh's portfolio.
+### Configuration fields
 
-"LEGO" is a trademark of the LEGO Group, which does not sponsor or endorse this project.
+| Field | Purpose |
+|---|---|
+| `avatar` | Name, skin/hair/outfit/trouser colors, and accessories |
+| `layout` | Starting room and an ordered list of room IDs, names, colors, and furniture |
+| `furniture` | Global on/off flags for supported furniture kinds |
+| `props` | Extra labelled items with room, position, scale, and color |
+| `room` | Shared wall, floor, accent, and window colors |
+| `lighting` | Day/night ambient colors, dim opacity, and glow color |
+| `dayCycle` | Enablement, IANA timezone, and a complete daily activity schedule |
+| `gateway` | Plain-DOM `Avatar.mount` selector and same-origin backend path |
+| `assetCredits` | Attribution for custom assets |
 
-If you supply custom assets, note their licence in `config.assetCredits`.
+## License
 
-## API surface
-
-```ts
-// Headless helpers (no DOM required)
-resolveConfig(config: ApartmentConfig): ResolvedApartmentConfig
-buildSceneSvg(config: ResolvedApartmentConfig, now?: Date): { svg: string; activity: DayActivity; period: DayPeriod }
-currentActivity(activities: DayActivity[], timezone: string, now?: Date): DayActivity
-dayPeriod(timezone: string, now?: Date): DayPeriod
-localHour(timezone: string, now?: Date): number
-activityCssClass(activity: AvatarActivity): string
-
-// Plain DOM
-mount(selector: string, config?: ApartmentConfig): () => void  // returns cleanup
-
-// React
-<ApartmentScene config={...} now={...} onAvatarMount={...} className={...} style={...} />
-```
+The starter package is Apache-2.0. “LEGO” is a trademark of the LEGO Group, which does not sponsor or endorse this project; the avatar artwork is original and brick-inspired.

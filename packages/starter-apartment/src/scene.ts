@@ -1,58 +1,179 @@
-/**
- * Headless scene state: resolves config, computes the current activity from
- * local time, and builds the SVG markup string for the apartment scene.
- *
- * This module has zero runtime dependencies — it can run in Node, browsers,
- * and edge workers. React and DOM usage lives in react.ts / script.ts.
- */
+/** Configuration validation, local day-cycle helpers, and original apartment SVG artwork. */
 
 import type {
   ApartmentConfig,
-  ResolvedApartmentConfig,
-  DayActivity,
+  ApartmentProp,
+  ApartmentRoom,
   AvatarActivity,
+  AvatarAccessory,
+  DayActivity,
   DayPeriod,
+  FurnitureKind,
+  ResolvedApartmentConfig,
+  RoomId,
 } from "./types.js";
-
 import {
   DEFAULT_AVATAR_LOOK,
-  DEFAULT_ROOM_THEME,
-  DEFAULT_FURNITURE,
   DEFAULT_DAY_CYCLE,
+  DEFAULT_FURNITURE,
+  DEFAULT_LAYOUT,
+  DEFAULT_LIGHTING,
+  DEFAULT_ROOM_THEME,
 } from "./types.js";
 
-// ---------------------------------------------------------------------------
-// Config resolution
-// ---------------------------------------------------------------------------
+const ROOM_IDS = new Set<RoomId>(["studio", "living", "kitchen", "bedroom", "bathroom", "gym", "garage"]);
+const FURNITURE_KINDS = new Set<FurnitureKind>([
+  "desk", "bed", "bookshelf", "plant", "window", "floorLamp", "coffeeTable", "sofa",
+  "island", "sink", "shower", "mirror", "weights", "mat", "car", "toolShelf",
+]);
+const ACCESSORIES = new Set<AvatarAccessory>(["glasses", "headphones", "hat", "none"]);
+const ACTIVITIES = new Set<AvatarActivity>(["sleeping", "waking", "coffee", "working", "reading", "stretching", "idle", "walking"]);
+const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 
-export function resolveConfig(config: ApartmentConfig): ResolvedApartmentConfig {
+function assertColor(value: string, label: string): void {
+  if (typeof value !== "string" || !COLOR_RE.test(value)) throw new Error(`${label} must be a six-digit hex color.`);
+}
+
+function assertRoomId(value: string, label: string): asserts value is RoomId {
+  if (!ROOM_IDS.has(value as RoomId)) throw new Error(`${label} is not a supported apartment room.`);
+}
+
+function validateRoom(room: ApartmentRoom, index: number): ApartmentRoom {
+  assertRoomId(room.id, `layout.rooms[${index}].id`);
+  if (!room.name.trim() || room.name.length > 40) throw new Error(`layout.rooms[${index}].name must contain 1–40 characters.`);
+  if (!Array.isArray(room.furniture) || room.furniture.some((kind) => !FURNITURE_KINDS.has(kind))) {
+    throw new Error(`layout.rooms[${index}].furniture contains an unsupported item.`);
+  }
+  if (room.wallColor !== undefined) assertColor(room.wallColor, `layout.rooms[${index}].wallColor`);
+  if (room.floorColor !== undefined) assertColor(room.floorColor, `layout.rooms[${index}].floorColor`);
+  return { ...room, furniture: [...new Set(room.furniture)] };
+}
+
+function validateProp(prop: ApartmentProp, index: number, roomIds: Set<RoomId>): ApartmentProp {
+  if (!/^[a-zA-Z0-9_-]{1,64}$/.test(prop.id)) throw new Error(`props[${index}].id must use letters, numbers, underscores, or hyphens.`);
+  assertRoomId(prop.room, `props[${index}].room`);
+  if (!roomIds.has(prop.room)) throw new Error(`props[${index}] refers to a room that is not in the layout.`);
+  if (!FURNITURE_KINDS.has(prop.kind)) throw new Error(`props[${index}].kind is not supported.`);
+  if (typeof prop.label !== "string" || !prop.label.trim() || prop.label.length > 60) throw new Error(`props[${index}].label must contain 1–60 characters.`);
+  if (!Number.isFinite(prop.x) || prop.x < 0 || prop.x > 100 || !Number.isFinite(prop.y) || prop.y < 0 || prop.y > 100) {
+    throw new Error(`props[${index}] x and y must be percentages from 0 to 100.`);
+  }
+  if (prop.scale !== undefined && (!Number.isFinite(prop.scale) || prop.scale < 0.25 || prop.scale > 2)) {
+    throw new Error(`props[${index}].scale must be between 0.25 and 2.`);
+  }
+  if (prop.color !== undefined) assertColor(prop.color, `props[${index}].color`);
+  return { ...prop };
+}
+
+function validateActivities(activities: DayActivity[], roomIds: Set<RoomId>): DayActivity[] {
+  if (!Array.isArray(activities) || activities.length < 1 || activities.length > 48) throw new Error("dayCycle.activities must contain 1–48 activities.");
+  const sorted = [...activities].sort((a, b) => a.startHour - b.startHour);
+  let expectedStart = 0;
+  for (const [index, item] of sorted.entries()) {
+    if (!Number.isInteger(item.startHour) || !Number.isInteger(item.endHour) || item.startHour !== expectedStart || item.endHour <= item.startHour || item.endHour > 24) {
+      throw new Error("dayCycle.activities must be contiguous, non-overlapping whole-hour intervals covering 0–24.");
+    }
+    if (!ACTIVITIES.has(item.activity)) throw new Error(`dayCycle.activities[${index}].activity is not supported.`);
+    if (typeof item.caption !== "string" || !item.caption.trim() || item.caption.length > 120) throw new Error(`dayCycle.activities[${index}].caption must contain 1–120 characters.`);
+    if (item.room) {
+      assertRoomId(item.room, `dayCycle.activities[${index}].room`);
+      if (!roomIds.has(item.room)) throw new Error(`dayCycle.activities[${index}] refers to a room that is not in the layout.`);
+    }
+    expectedStart = item.endHour;
+  }
+  if (expectedStart !== 24) throw new Error("dayCycle.activities must cover the entire 24-hour day.");
+  return sorted.map((activity) => ({ ...activity }));
+}
+
+function validateTimezone(timezone: string): void {
+  try {
+    if (typeof timezone !== "string" || !timezone.trim()) throw new Error("invalid");
+    new Intl.DateTimeFormat("en", { timeZone: timezone });
+  }
+  catch { throw new Error("dayCycle.timezone must be a valid IANA timezone."); }
+}
+
+export function resolveConfig(config: ApartmentConfig = {}): ResolvedApartmentConfig {
+  const avatar = { ...DEFAULT_AVATAR_LOOK, ...config.avatar };
+  for (const [key, value] of Object.entries({
+    skinTone: avatar.skinTone,
+    hairColor: avatar.hairColor,
+    outfitColor: avatar.outfitColor,
+    trouserColor: avatar.trouserColor,
+  })) assertColor(value, `avatar.${key}`);
+  if (!avatar.name.trim() || avatar.name.length > 100) throw new Error("avatar.name must contain 1–100 characters.");
+  if (!Array.isArray(avatar.accessories) || avatar.accessories.some((item) => !ACCESSORIES.has(item))) throw new Error("avatar.accessories contains an unsupported accessory.");
+
+  const room = { ...DEFAULT_ROOM_THEME, ...config.room };
+  for (const [key, value] of Object.entries(room)) assertColor(value, `room.${key}`);
+
+  const furniture = { ...DEFAULT_FURNITURE, ...config.furniture };
+  for (const [key, value] of Object.entries(furniture)) {
+    if (!FURNITURE_KINDS.has(key as FurnitureKind) || typeof value !== "boolean") throw new Error(`furniture.${key} must be a boolean option.`);
+  }
+
+  const suppliedRooms = config.layout?.rooms ?? DEFAULT_LAYOUT.rooms;
+  if (!Array.isArray(suppliedRooms) || suppliedRooms.length < 1 || suppliedRooms.length > ROOM_IDS.size) {
+    throw new Error(`layout.rooms must contain between 1 and ${ROOM_IDS.size} rooms.`);
+  }
+  const rooms = suppliedRooms.map(validateRoom);
+  const roomIds = new Set(rooms.map((item) => item.id));
+  if (roomIds.size !== rooms.length) throw new Error("layout.rooms cannot contain duplicate room ids.");
+  const startRoom = config.layout?.startRoom ?? DEFAULT_LAYOUT.startRoom;
+  assertRoomId(startRoom, "layout.startRoom");
+  if (!roomIds.has(startRoom)) throw new Error("layout.startRoom must be included in layout.rooms.");
+
+  const props = (config.props ?? []).map((prop, index) => validateProp(prop, index, roomIds));
+  if (new Set(props.map((prop) => prop.id)).size !== props.length) throw new Error("props ids must be unique.");
+
+  const lighting = { ...DEFAULT_LIGHTING, ...config.lighting };
+  assertColor(lighting.ambientDayColor, "lighting.ambientDayColor");
+  assertColor(lighting.ambientNightColor, "lighting.ambientNightColor");
+  assertColor(lighting.glowColor, "lighting.glowColor");
+  if (!Number.isFinite(lighting.nightDimOpacity) || lighting.nightDimOpacity < 0 || lighting.nightDimOpacity > 0.8) {
+    throw new Error("lighting.nightDimOpacity must be between 0 and 0.8.");
+  }
+
+  const dayCycle = {
+    ...DEFAULT_DAY_CYCLE,
+    ...config.dayCycle,
+    activities: validateActivities(
+      config.dayCycle?.activities ?? DEFAULT_DAY_CYCLE.activities.map((activity) => ({
+        ...activity,
+        ...(activity.room && !roomIds.has(activity.room) ? { room: startRoom } : {}),
+      })),
+      roomIds,
+    ),
+  };
+  if (typeof dayCycle.enabled !== "boolean") throw new Error("dayCycle.enabled must be a boolean.");
+  validateTimezone(dayCycle.timezone);
+
+  if (config.gateway) {
+    if (!config.gateway.selector.trim() || !config.gateway.backendUrl.startsWith("/") || config.gateway.backendUrl.startsWith("//") || config.gateway.backendUrl.includes("\\")) {
+      throw new Error("gateway must provide a selector and same-origin absolute backend path.");
+    }
+  }
+  if (config.assetCredits && config.assetCredits.length > 1000) throw new Error("assetCredits must be at most 1000 characters.");
+
   return {
-    avatar: { ...DEFAULT_AVATAR_LOOK, ...config.avatar },
-    room: { ...DEFAULT_ROOM_THEME, ...config.room },
-    furniture: { ...DEFAULT_FURNITURE, ...config.furniture },
-    dayCycle: {
-      ...DEFAULT_DAY_CYCLE,
-      ...config.dayCycle,
-      activities: config.dayCycle?.activities ?? DEFAULT_DAY_CYCLE.activities,
-    },
+    avatar,
+    room,
+    furniture,
+    layout: { startRoom, rooms },
+    props,
+    lighting,
+    dayCycle,
     gateway: config.gateway,
     assetCredits: config.assetCredits,
   };
 }
 
-// ---------------------------------------------------------------------------
-// Day-cycle helpers
-// ---------------------------------------------------------------------------
-
-/** Returns the local hour (0–23) in the given IANA timezone. */
+/** Returns the local 24-hour clock value for an IANA timezone. */
 export function localHour(timezone: string, now = new Date()): number {
   try {
-    const parts = new Intl.DateTimeFormat("en-US", {
-      hour: "numeric", hour12: false, timeZone: timezone,
-    }).formatToParts(now);
-    const h = parts.find((p) => p.type === "hour")?.value ?? "0";
-    const n = parseInt(h, 10);
-    return Number.isFinite(n) ? n % 24 : now.getHours();
+    const parts = new Intl.DateTimeFormat("en-US", { hour: "numeric", hour12: false, timeZone: timezone }).formatToParts(now);
+    const value = Number(parts.find((part) => part.type === "hour")?.value ?? "0");
+    return Number.isFinite(value) ? value % 24 : now.getHours();
   } catch {
     return now.getHours();
   }
@@ -60,13 +181,14 @@ export function localHour(timezone: string, now = new Date()): number {
 
 export function currentActivity(activities: DayActivity[], timezone: string, now = new Date()): DayActivity {
   const hour = localHour(timezone, now);
-  const match = activities.find((a) => hour >= a.startHour && hour < a.endHour);
-  return match ?? activities[0] ?? { startHour: 0, endHour: 24, activity: "idle", caption: "Just chilling" };
+  return activities.find((item) => hour >= item.startHour && hour < item.endHour)
+    ?? activities[0]
+    ?? { startHour: 0, endHour: 24, activity: "idle", caption: "Having a quiet moment" };
 }
 
 export function dayPeriod(timezone: string, now = new Date()): DayPeriod {
   const hour = localHour(timezone, now);
-  if (hour >= 5 && hour < 7)  return "dawn";
+  if (hour >= 5 && hour < 7) return "dawn";
   if (hour >= 7 && hour < 12) return "morning";
   if (hour >= 12 && hour < 14) return "noon";
   if (hour >= 14 && hour < 18) return "afternoon";
@@ -74,228 +196,188 @@ export function dayPeriod(timezone: string, now = new Date()): DayPeriod {
   return "night";
 }
 
-// ---------------------------------------------------------------------------
-// SVG scene builder
-// ---------------------------------------------------------------------------
-
-function esc(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+function esc(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
-function windowColor(period: DayPeriod, cfg: ResolvedApartmentConfig): string {
-  if (period === "night" || period === "evening") return cfg.room.windowNightColor;
-  return cfg.room.windowDaytimeColor;
+function daylight(period: DayPeriod): boolean {
+  return period !== "night" && period !== "evening";
 }
 
-/** Builds the brick-style avatar SVG group at (cx, cy). */
-function buildAvatarSvg(cfg: ResolvedApartmentConfig, activity: AvatarActivity): string {
-  const { skinTone, hairColor, outfitColor, trouserColor } = cfg.avatar;
-  const hasGlasses = cfg.avatar.accessories.includes("glasses");
-  const hasHeadphones = cfg.avatar.accessories.includes("headphones");
+function windowSvg(color: string, period: DayPeriod, glow: string): string {
+  const sun = daylight(period)
+    ? `<circle cx="365" cy="91" r="19" fill="${glow}" opacity=".85"/><path d="M325 139 Q360 120 399 140" fill="none" stroke="#f8faf6" stroke-width="4" opacity=".65"/>`
+    : `<circle cx="365" cy="91" r="16" fill="#f6efd3"/><circle cx="372" cy="86" r="16" fill="${color}"/><g fill="#f6efd3"><circle cx="330" cy="74" r="2"/><circle cx="402" cy="108" r="2"/><circle cx="345" cy="126" r="1.7"/></g>`;
+  return `<g aria-hidden="true"><rect x="300" y="48" width="130" height="100" rx="5" fill="#364552" stroke="#18242d" stroke-width="5"/><rect x="307" y="55" width="116" height="86" fill="${color}"/><path d="M365 56V141M308 98H422" stroke="#d2cbb7" stroke-width="5"/>${sun}<path d="M292 149H438" stroke="#817663" stroke-width="8" stroke-linecap="round"/></g>`;
+}
 
-  // Pose-specific transforms
-  const poseTransform = activity === "sleeping"
-    ? 'transform="rotate(-90, 100, 115) translate(-30, 30)"'
-    : activity === "working"
-    ? 'transform="translate(0, 0)"'
-    : activity === "stretching"
-    ? 'transform="translate(0, -3)"'
+function furnitureSvg(kind: FurnitureKind, x: number, y: number, scale = 1, accent = "#597b72", color?: string): string {
+  const dx = x.toFixed(1);
+  const dy = y.toFixed(1);
+  const s = scale.toFixed(2);
+  const wood = color ?? "#9a7152";
+  const ink = "#25333a";
+  const shapes: Record<FurnitureKind, string> = {
+    desk: `<path d="M5 34H140V45H5zM15 45H24V98H15zM120 45H129V98H120z" fill="${wood}" stroke="${ink}" stroke-width="4"/><rect x="52" y="-14" width="54" height="45" rx="4" fill="#344752" stroke="${ink}" stroke-width="4"/><rect x="57" y="-9" width="44" height="34" rx="2" fill="#b7d7dc"/><path d="M77 33h8v8h-8zM43 36h74" fill="none" stroke="${ink}" stroke-width="3"/><path d="M57 2h31m-31 7h22" stroke="${accent}" stroke-width="3"/>`,
+    bed: `<path d="M4 26H144V84H4z" fill="${wood}" stroke="${ink}" stroke-width="4"/><path d="M11 23H137V56H11z" fill="#d7d2c2" stroke="${ink}" stroke-width="3"/><rect x="15" y="26" width="38" height="21" rx="8" fill="#f5f0e2"/><path d="M55 46H137V78H55z" fill="${accent}" opacity=".82"/><path d="M13 84v14m122-14v14" stroke="${ink}" stroke-width="6"/>`,
+    bookshelf: `<rect x="3" y="0" width="72" height="102" rx="4" fill="${wood}" stroke="${ink}" stroke-width="4"/><path d="M7 31H71M7 62H71" stroke="#604a3c" stroke-width="5"/><path d="M13 5h12v22H13zm17 4h11v18H30zm16-2h15v20H46zM14 36h11v21H14zm16-1h13v22H30zm18 3h18v18H48zM15 67h13v23H15zm18 4h14v19H33z" fill="#e1b26f" stroke="${ink}" stroke-width="2"/>`,
+    plant: `<path d="M24 49h48l-6 42H30z" fill="#ba805a" stroke="${ink}" stroke-width="4"/><path d="M48 49C21 38 17 15 28 10c14 2 21 21 20 39M48 49C53 18 75 8 83 17c-2 16-17 28-35 32M48 49C34 26 41 4 52 3c12 10 10 30-4 46" fill="${accent}" stroke="${ink}" stroke-width="3"/>`,
+    window: windowSvg("#b7d7dc", "afternoon", "#ffe7a3"),
+    floorLamp: `<path d="M42 92h47m-23 0V22" stroke="${ink}" stroke-width="6" stroke-linecap="round"/><path d="M49 24h35L76 2H57z" fill="#e2bd74" stroke="${ink}" stroke-width="4"/><circle cx="66" cy="36" r="25" fill="#ffe7a3" opacity=".14"/>`,
+    coffeeTable: `<path d="M5 18h110v12H5zM16 30h8v35h-8zm80 0h8v35h-8z" fill="${wood}" stroke="${ink}" stroke-width="4"/><path d="M48 13h18v5H48z" fill="#efe4cc" stroke="${ink}" stroke-width="2"/>`,
+    sofa: `<path d="M10 28q0-14 14-14h86q14 0 14 14v48H10z" fill="${accent}" stroke="${ink}" stroke-width="4"/><path d="M20 31h42v36H20zm48 0h45v36H68z" fill="#75968c" stroke="${ink}" stroke-width="3"/><path d="M10 66h114v18H10zM19 84v12m96-12v12" stroke="${ink}" stroke-width="5"/>`,
+    island: `<path d="M2 12h145v13H2zM10 25h130v63H10z" fill="#d9d2c0" stroke="${ink}" stroke-width="4"/><path d="M15 39h120M21 88v12m107-12v12" stroke="#92745d" stroke-width="4"/><path d="M35 6v6m80-6v6" stroke="${ink}" stroke-width="6"/>`,
+    sink: `<rect x="5" y="30" width="120" height="52" rx="4" fill="${wood}" stroke="${ink}" stroke-width="4"/><path d="M17 27q48 37 96 0v18q-48 28-96 0z" fill="#dbe3df" stroke="${ink}" stroke-width="3"/><path d="M65 20V7q0-7 8-7h12" fill="none" stroke="#647d88" stroke-width="5"/>`,
+    shower: `<rect x="8" y="5" width="95" height="89" fill="#a9c3c9" fill-opacity=".45" stroke="${ink}" stroke-width="4"/><path d="M18 12h76M19 18v72M92 18v72" stroke="#e6ece9" stroke-width="4"/><path d="M48 6q20 0 20 16M63 24v24m-9-16 9 8 9-8" fill="none" stroke="#647d88" stroke-width="4"/>`,
+    mirror: `<rect x="15" y="2" width="65" height="82" rx="24" fill="#c7d9d9" stroke="${ink}" stroke-width="4"/><path d="M28 21q19-14 39-5" stroke="#f7f7ed" stroke-width="5" fill="none"/>`,
+    weights: `<path d="M12 35h115M28 18v34m-9-27v20m85-27v34m9-27v20" stroke="${ink}" stroke-width="7" stroke-linecap="round"/><path d="M45 68h54" stroke="${accent}" stroke-width="8" stroke-linecap="round"/>`,
+    mat: `<rect x="4" y="25" width="115" height="55" rx="25" fill="${accent}" stroke="${ink}" stroke-width="4"/><path d="M27 28v49m67-49v49" stroke="#d3e0d9" stroke-width="3" opacity=".7"/>`,
+    car: `<path d="M10 59l12-25q4-9 14-9h49q10 0 16 9l19 25v21H9z" fill="${accent}" stroke="${ink}" stroke-width="4"/><path d="M29 34h26v21H18zm33 0h22q8 0 12 8l8 13H62z" fill="#bed7d8" stroke="${ink}" stroke-width="3"/><circle cx="32" cy="81" r="12" fill="#343c40"/><circle cx="99" cy="81" r="12" fill="#343c40"/><circle cx="32" cy="81" r="5" fill="#bdc7c4"/><circle cx="99" cy="81" r="5" fill="#bdc7c4"/>`,
+    toolShelf: `<rect x="4" y="2" width="105" height="92" fill="${wood}" stroke="${ink}" stroke-width="4"/><path d="M8 32h97M8 62h97" stroke="#654c3b" stroke-width="5"/><path d="M18 6v22m18-22v22m25-22v22m22 6v22m-44-22v22m47 8v23m20-23v23" stroke="${accent}" stroke-width="7"/>`,
+  };
+  return `<g transform="translate(${dx} ${dy}) scale(${s})" role="img" aria-label="${esc(kind)}">${shapes[kind]}</g>`;
+}
+
+function buildAvatarSvg(cfg: ResolvedApartmentConfig, activity: AvatarActivity, x: number, y: number): string {
+  const { skinTone, hairColor, outfitColor, trouserColor, accessories, name } = cfg.avatar;
+  const sleeping = activity === "sleeping";
+  const stretch = activity === "stretching";
+  const work = activity === "working";
+  const raised = stretch
+    ? `<path d="M54 98L38 66q-3-7 4-11 6-3 10 4l15 27m45 12 16-32q3-7-4-11-7-3-10 4l-14 27" fill="${skinTone}" stroke="#25333a" stroke-width="5" stroke-linejoin="round"/>`
+    : work
+    ? `<path d="M55 105l-13 28q-3 7 4 11 7 3 11-4l15-25m41-10 15 25q4 7 10 3 6-4 2-11l-19-28" fill="${skinTone}" stroke="#25333a" stroke-width="5" stroke-linejoin="round"/>`
+    : `<path d="M55 104l-16 27q-4 7 3 11 7 4 11-3l19-26m38-9 18 26q5 7 11 2 6-5 1-11l-21-27" fill="${skinTone}" stroke="#25333a" stroke-width="5" stroke-linejoin="round"/>`;
+  const accessory = accessories.includes("glasses")
+    ? `<path d="M48 45h19m24 0h19" stroke="#25333a" stroke-width="4"/><rect x="53" y="38" width="18" height="15" rx="4" fill="none" stroke="#25333a" stroke-width="3"/><rect x="87" y="38" width="18" height="15" rx="4" fill="none" stroke="#25333a" stroke-width="3"/>`
+    : accessories.includes("headphones")
+    ? `<path d="M45 47V37q0-31 36-31t36 31v10" fill="none" stroke="#25333a" stroke-width="6"/><rect x="41" y="41" width="12" height="24" rx="5" fill="#8da0b2" stroke="#25333a" stroke-width="3"/><rect x="109" y="41" width="12" height="24" rx="5" fill="#8da0b2" stroke="#25333a" stroke-width="3"/>`
+    : accessories.includes("hat")
+    ? `<path d="M43 25q2-19 38-19t38 19v6H43zM33 30h96v8H33z" fill="#e2bd74" stroke="#25333a" stroke-width="4"/>`
     : "";
-
-  const armPos = activity === "working"
-    ? `<path d="M57 111c0-9 7-16 16-16l-8 28z" fill="${esc(outfitColor)}" stroke="#172320" stroke-width="5"/>
-       <path d="M143 111c0-9-7-16-16-16l8 28z" fill="${esc(outfitColor)}" stroke="#172320" stroke-width="5"/>`
-    : activity === "stretching"
-    ? `<path d="M57 111l-20-20c-3-3 0-9 5-9l12 4 15 28z" fill="${esc(skinTone)}" stroke="#172320" stroke-width="5"/>
-       <path d="M143 111l20-20c3-3 0-9-5-9l-12 4-15 28z" fill="${esc(skinTone)}" stroke="#172320" stroke-width="5"/>`
-    : `<path d="M64 120l-17 28c-3 5 0 11 6 13l10 3 18-29z" fill="${esc(skinTone)}" stroke="#172320" stroke-width="5"/>
-       <path d="M136 120l16 27c3 5 0 11-6 13l-9 3-17-28z" fill="${esc(skinTone)}" stroke="#172320" stroke-width="5"/>`;
-
-  return `<g ${poseTransform}>
-    <!-- shadow -->
-    <ellipse cx="100" cy="215" rx="59" ry="9" fill="#23332d" opacity=".18"/>
-    <!-- hair / hat -->
-    <path d="M76 18c0-10 10-16 24-16s24 6 24 16v9H76z" fill="${esc(hairColor)}" stroke="#172320" stroke-width="4"/>
-    <!-- head -->
-    <path d="M61 39c0-12 11-21 25-21h28c14 0 25 9 25 21v33c0 20-17 35-39 35h-1c-22 0-38-15-38-35z" fill="${esc(skinTone)}" stroke="#172320" stroke-width="5"/>
-    <!-- eyes -->
-    <path d="M78 60v4m44-4v4" stroke="#172320" stroke-width="7" stroke-linecap="round"/>
-    ${hasGlasses ? `<rect x="70" y="55" width="22" height="16" rx="5" fill="none" stroke="#172320" stroke-width="3"/>
-                    <rect x="108" y="55" width="22" height="16" rx="5" fill="none" stroke="#172320" stroke-width="3"/>
-                    <path d="M92 63h16" stroke="#172320" stroke-width="3"/>` : ""}
-    ${hasHeadphones ? `<path d="M62 55 Q62 30 100 30 Q138 30 138 55" fill="none" stroke="#172320" stroke-width="6"/>
-                       <rect x="55" y="52" width="14" height="18" rx="7" fill="${esc(cfg.avatar.outfitColor)}" stroke="#172320" stroke-width="3"/>
-                       <rect x="131" y="52" width="14" height="18" rx="7" fill="${esc(cfg.avatar.outfitColor)}" stroke="#172320" stroke-width="3"/>` : ""}
-    <!-- smile -->
-    <path d="M86 82c8 9 20 9 28 0" fill="none" stroke="#172320" stroke-width="4" stroke-linecap="round"/>
-    <!-- body -->
-    <path d="M57 111c0-9 7-16 16-16h55c9 0 16 7 16 16v54H57z" fill="${esc(outfitColor)}" stroke="#172320" stroke-width="5"/>
-    <!-- stud strip on shirt -->
-    <path d="M68 111v-9c0-7 6-13 13-13s13 6 13 13v9m-5-1v-8c0-5 4-9 9-9s9 4 9 9v8m-3 1v-7c0-4 3-7 7-7s7 3 7 7v7" fill="#f7f5ed" stroke="#172320" stroke-width="4"/>
-    <!-- arms -->
-    ${armPos}
-    <!-- legs -->
-    <path d="M69 168v28c0 5 4 9 9 9h16v-37zm35 0v37h18c5 0 9-4 9-9v-28z" fill="${esc(trouserColor)}" stroke="#172320" stroke-width="5" stroke-linejoin="round"/>
-    <!-- accent circles for accessories (knees) -->
-    <circle cx="43" cy="166" r="11" fill="#ff895e" stroke="#172320" stroke-width="4"/>
+  const transform = sleeping
+    ? `translate(${x} ${y}) scale(.68) rotate(-78 80 104) translate(-24 4)`
+    : `translate(${x} ${y}) scale(.68)`;
+  return `<g class="ag-apartment__avatar" transform="${transform}" role="img" aria-label="${esc(name)} is ${activity}">
+    <rect x="51" y="15" width="58" height="55" rx="18" fill="${skinTone}" stroke="#25333a" stroke-width="5"/>
+    <path d="M52 29q-2-24 28-26 28 1 30 24-20-12-58 2" fill="${hairColor}" stroke="#25333a" stroke-width="4"/>
+    <circle cx="68" cy="45" r="3.5" fill="#25333a"/><circle cx="93" cy="45" r="3.5" fill="#25333a"/>
+    <path d="M71 56q10 9 20 0" fill="none" stroke="#25333a" stroke-width="3" stroke-linecap="round"/>${accessory}
+    <path d="M52 83q0-11 12-11h37q12 0 12 11v48H52z" fill="${outfitColor}" stroke="#25333a" stroke-width="5"/>
+    <circle cx="68" cy="81" r="5" fill="#e9e3d4"/><circle cx="83" cy="78" r="5" fill="#e9e3d4"/><circle cx="98" cy="81" r="5" fill="#e9e3d4"/>
+    ${raised}
+    <path d="M61 131v30q0 7 7 7h18v-37zm28 0v37h18q7 0 7-7v-30z" fill="${trouserColor}" stroke="#25333a" stroke-width="5"/>
+    <path d="M62 166h23m6 0h22" stroke="#25333a" stroke-width="8" stroke-linecap="round"/>
   </g>`;
 }
 
-/** Generates the full apartment SVG as a string. */
-export function buildSceneSvg(cfg: ResolvedApartmentConfig, now = new Date()): {
+function defaultFurniturePosition(kind: FurnitureKind): { x: number; y: number; scale: number } {
+  const positions: Record<FurnitureKind, { x: number; y: number; scale: number }> = {
+    desk: { x: 52, y: 198, scale: 1.1 }, bed: { x: 395, y: 210, scale: 1.15 }, bookshelf: { x: 485, y: 92, scale: 0.9 },
+    plant: { x: 115, y: 130, scale: 0.8 }, window: { x: 0, y: 0, scale: 1 }, floorLamp: { x: 465, y: 190, scale: 0.85 },
+    coffeeTable: { x: 290, y: 264, scale: 1 }, sofa: { x: 160, y: 205, scale: 1 }, island: { x: 218, y: 214, scale: 1 },
+    sink: { x: 100, y: 201, scale: 0.9 }, shower: { x: 407, y: 92, scale: 0.88 }, mirror: { x: 286, y: 87, scale: 0.9 },
+    weights: { x: 365, y: 229, scale: 1 }, mat: { x: 183, y: 279, scale: 0.9 }, car: { x: 181, y: 189, scale: 1.45 },
+    toolShelf: { x: 425, y: 104, scale: 0.9 },
+  };
+  return positions[kind];
+}
+
+function renderFurniture(room: ApartmentRoom, cfg: ResolvedApartmentConfig): string {
+  return room.furniture
+    .filter((kind) => cfg.furniture[kind])
+    .filter((kind) => kind !== "window")
+    .map((kind) => {
+      const position = defaultFurniturePosition(kind);
+      const label = kind.replace(/[A-Z]/g, (letter) => ` ${letter.toLowerCase()}`).replace(/^./, (letter) => letter.toUpperCase());
+      return `<g class="ag-apartment__furniture-item" data-furniture="${kind}" role="img" aria-label="${label}">${furnitureSvg(kind, position.x, position.y, position.scale, cfg.room.accentColor)}</g>`;
+    }).join("");
+}
+
+function renderProps(room: ApartmentRoom, props: ApartmentProp[], accent: string): string {
+  return props.filter((prop) => prop.room === room.id).map((prop) => {
+    const x = 54 + prop.x * 5.25;
+    const y = 52 + prop.y * 2.55;
+    const color = prop.color ?? accent;
+    return `<g class="ag-apartment__prop" aria-label="${esc(prop.label)}">${furnitureSvg(prop.kind, x, y, prop.scale ?? 0.65, color, color)}</g>`;
+  }).join("");
+}
+
+export interface BuiltScene {
   svg: string;
   activity: DayActivity;
   period: DayPeriod;
-} {
-  const period = dayPeriod(cfg.dayCycle.timezone, now);
-  const act = cfg.dayCycle.enabled
-    ? currentActivity(cfg.dayCycle.activities, cfg.dayCycle.timezone, now)
-    : cfg.dayCycle.activities[0] ?? { startHour: 0, endHour: 24, activity: "idle" as AvatarActivity, caption: "Idle" };
-
-  const w = cfg.room.windowNightColor;
-  const winColor = windowColor(period, cfg);
-  const wallC = esc(cfg.room.wallColor);
-  const floorC = esc(cfg.room.floorColor);
-  const accentC = esc(cfg.room.accentColor);
-  const winC = esc(winColor);
-  const isDark = period === "night" || period === "evening";
-
-  // Dim the room at night
-  const ambientOpacity = isDark ? 0.55 : 0;
-
-  // Furniture visibility
-  const { desk, bed, bookshelf, plant, window: showWindow, floorLamp } = cfg.furniture;
-
-  const avatarX = act.activity === "sleeping" ? 240 : act.activity === "working" ? 155 : 180;
-  const avatarY = act.activity === "sleeping" ? 200 : 290;
-  const avatarScale = 0.52;
-
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 540 400" role="img" aria-label="Apartment scene — ${esc(cfg.avatar.name)} is ${esc(act.caption.toLowerCase())}">
-  <defs>
-    <radialGradient id="lampGlow" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="#fff9e0" stop-opacity="0.8"/>
-      <stop offset="100%" stop-color="#fff9e0" stop-opacity="0"/>
-    </radialGradient>
-  </defs>
-
-  <!-- Room walls & floor -->
-  <rect x="0" y="0" width="540" height="400" fill="${wallC}"/>
-  <!-- Left wall accent -->
-  <rect x="0" y="0" width="8" height="400" fill="${accentC}" opacity="0.25"/>
-  <!-- Baseboard -->
-  <rect x="0" y="320" width="540" height="80" fill="${floorC}"/>
-  <rect x="0" y="318" width="540" height="5" fill="${esc(cfg.room.floorColor)}" opacity="0.6"/>
-  <!-- Floor boards (horizontal lines) -->
-  <line x1="0" y1="340" x2="540" y2="340" stroke="#b09060" stroke-width="1" opacity="0.4"/>
-  <line x1="0" y1="360" x2="540" y2="360" stroke="#b09060" stroke-width="1" opacity="0.4"/>
-  <line x1="0" y1="380" x2="540" y2="380" stroke="#b09060" stroke-width="1" opacity="0.4"/>
-
-  ${showWindow ? `
-  <!-- Window -->
-  <rect x="60" y="40" width="140" height="110" rx="6" fill="${winC}" stroke="#172320" stroke-width="4"/>
-  <rect x="62" y="42" width="136" height="106" rx="4" fill="none" stroke="#172320" stroke-width="2" opacity="0.3"/>
-  <line x1="130" y1="42" x2="130" y2="148" stroke="#172320" stroke-width="3"/>
-  <line x1="62"  y1="95" x2="198" y2="95" stroke="#172320" stroke-width="3"/>
-  <!-- Window sill -->
-  <rect x="52" y="148" width="156" height="10" rx="3" fill="${wallC}" stroke="#172320" stroke-width="3"/>
-  ${period === "morning" || period === "noon" ? `<ellipse cx="130" cy="68" rx="18" ry="18" fill="#ffd466" opacity="0.45"/>` : ""}
-  ` : ""}
-
-  ${plant ? `
-  <!-- Potted plant -->
-  <ellipse cx="215" cy="162" rx="18" ry="7" fill="#8a7040" stroke="#172320" stroke-width="2"/>
-  <rect x="197" y="138" width="36" height="26" rx="5" fill="#a08040" stroke="#172320" stroke-width="3"/>
-  <!-- leaves -->
-  <path d="M215 136 Q205 110 190 108 Q200 122 215 136z" fill="#5a9e3c" stroke="#172320" stroke-width="2"/>
-  <path d="M215 136 Q225 108 242 106 Q230 122 215 136z" fill="#72b84c" stroke="#172320" stroke-width="2"/>
-  <path d="M215 136 Q212 106 215 95 Q218 106 215 136z" fill="#5a9e3c" stroke="#172320" stroke-width="2"/>
-  ` : ""}
-
-  ${bookshelf ? `
-  <!-- Bookshelf -->
-  <rect x="400" y="50" width="130" height="210" rx="5" fill="#c9a86a" stroke="#172320" stroke-width="4"/>
-  <!-- shelves -->
-  <rect x="400" y="108" width="130" height="8" fill="#a08040" stroke="#172320" stroke-width="2"/>
-  <rect x="400" y="168" width="130" height="8" fill="#a08040" stroke="#172320" stroke-width="2"/>
-  <rect x="400" y="228" width="130" height="8" fill="#a08040" stroke="#172320" stroke-width="2"/>
-  <!-- books row 1 -->
-  <rect x="408" y="60"  width="14" height="46" rx="2" fill="${accentC}" stroke="#172320" stroke-width="2"/>
-  <rect x="425" y="65"  width="18" height="41" rx="2" fill="#ff895e" stroke="#172320" stroke-width="2"/>
-  <rect x="446" y="62"  width="12" height="44" rx="2" fill="#c9f36a" stroke="#172320" stroke-width="2"/>
-  <rect x="461" y="67"  width="16" height="39" rx="2" fill="#c6b9ff" stroke="#172320" stroke-width="2"/>
-  <rect x="480" y="60"  width="14" height="46" rx="2" fill="#ffd466" stroke="#172320" stroke-width="2"/>
-  <rect x="497" y="64"  width="12" height="42" rx="2" fill="${accentC}" stroke="#172320" stroke-width="2"/>
-  <!-- books row 2 -->
-  <rect x="408" y="118" width="16" height="48" rx="2" fill="#ff895e" stroke="#172320" stroke-width="2"/>
-  <rect x="427" y="120" width="14" height="46" rx="2" fill="${accentC}" stroke="#172320" stroke-width="2"/>
-  <rect x="444" y="116" width="18" height="50" rx="2" fill="#c9f36a" stroke="#172320" stroke-width="2"/>
-  <rect x="465" y="119" width="12" height="47" rx="2" fill="#ffd466" stroke="#172320" stroke-width="2"/>
-  <rect x="480" y="121" width="16" height="45" rx="2" fill="#c6b9ff" stroke="#172320" stroke-width="2"/>
-  <!-- small ornament row 3 -->
-  <circle cx="420" cy="195" r="10" fill="${accentC}" stroke="#172320" stroke-width="2"/>
-  <rect x="440" y="183" width="20" height="30" rx="3" fill="#ff895e" stroke="#172320" stroke-width="2"/>
-  <rect x="464" y="178" width="14" height="35" rx="2" fill="#c9f36a" stroke="#172320" stroke-width="2"/>
-  ` : ""}
-
-  ${desk ? `
-  <!-- Desk -->
-  <rect x="80" y="270" width="250" height="60" rx="8" fill="#c9a86a" stroke="#172320" stroke-width="4"/>
-  <!-- Desk legs -->
-  <rect x="90"  y="328" width="14" height="38" rx="3" fill="#a08040" stroke="#172320" stroke-width="3"/>
-  <rect x="302" y="328" width="14" height="38" rx="3" fill="#a08040" stroke="#172320" stroke-width="3"/>
-  <!-- Monitor -->
-  <rect x="130" y="200" width="120" height="78" rx="8" fill="#172320" stroke="#172320" stroke-width="4"/>
-  <rect x="138" y="208" width="104" height="62" rx="4" fill="${isDark ? "#1e2d50" : "#e8f0fc"}"/>
-  ${isDark ? `<rect x="148" y="218" width="60" height="6" rx="3" fill="${accentC}" opacity="0.7"/>
-              <rect x="148" y="230" width="40" height="6" rx="3" fill="${accentC}" opacity="0.5"/>
-              <rect x="148" y="242" width="50" height="6" rx="3" fill="${accentC}" opacity="0.4"/>` :
-            `<rect x="148" y="218" width="60" height="6" rx="3" fill="#172320" opacity="0.25"/>
-              <rect x="148" y="230" width="40" height="6" rx="3" fill="#172320" opacity="0.2"/>
-              <rect x="148" y="242" width="50" height="6" rx="3" fill="#172320" opacity="0.15"/>`}
-  <!-- Monitor stand -->
-  <rect x="182" y="278" width="16" height="10" rx="2" fill="#172320" stroke="#172320" stroke-width="2"/>
-  <rect x="170" y="288" width="40" height="6" rx="3" fill="#172320" opacity="0.5"/>
-  <!-- Keyboard -->
-  <rect x="118" y="292" width="90" height="22" rx="4" fill="#e8e0d0" stroke="#172320" stroke-width="3"/>
-  <!-- Mug -->
-  <rect x="262" y="258" width="28" height="22" rx="6" fill="${accentC}" stroke="#172320" stroke-width="3"/>
-  <path d="M290 265 Q302 265 302 272 Q302 279 290 279" fill="none" stroke="#172320" stroke-width="3"/>
-  ` : ""}
-
-  ${bed ? `
-  <!-- Bed -->
-  <rect x="330" y="290" width="110" height="70" rx="8" fill="#e8e0d4" stroke="#172320" stroke-width="4"/>
-  <!-- Headboard -->
-  <rect x="326" y="268" width="118" height="28" rx="8" fill="#a08040" stroke="#172320" stroke-width="4"/>
-  <!-- Pillow -->
-  <rect x="336" y="278" width="50" height="26" rx="7" fill="#f7f5ed" stroke="#172320" stroke-width="3"/>
-  <!-- Duvet texture -->
-  <path d="M330 305 Q385 299 440 305" fill="none" stroke="#d0c8bc" stroke-width="3"/>
-  <path d="M330 318 Q385 312 440 318" fill="none" stroke="#d0c8bc" stroke-width="3"/>
-  ` : ""}
-
-  ${floorLamp ? `
-  <!-- Floor lamp -->
-  <line x1="370" y1="160" x2="375" y2="320" stroke="#172320" stroke-width="5" stroke-linecap="round"/>
-  <ellipse cx="370" cy="320" rx="20" ry="6" fill="#a08040" stroke="#172320" stroke-width="3"/>
-  <!-- Lamp shade -->
-  <path d="M350 160 Q370 130 390 160 Z" fill="#ffd466" stroke="#172320" stroke-width="3"/>
-  ${isDark ? `<ellipse cx="370" cy="200" rx="60" ry="60" fill="url(#lampGlow)" opacity="0.5"/>` : ""}
-  ` : ""}
-
-  <!-- Avatar (scaled and translated) -->
-  <g transform="translate(${avatarX}, ${avatarY}) scale(${avatarScale})">
-    ${buildAvatarSvg(cfg, act.activity)}
-  </g>
-
-  <!-- Night overlay -->
-  <rect x="0" y="0" width="540" height="400" fill="#0a0f1e" opacity="${ambientOpacity}"/>
-</svg>`;
-
-  return { svg, activity: act, period };
+  room: ApartmentRoom;
 }
 
-/** Returns the current day-period label for CSS animation class names. */
+export function buildSceneSvg(cfg: ResolvedApartmentConfig, now = new Date(), selectedRoom?: RoomId): BuiltScene {
+  const period = dayPeriod(cfg.dayCycle.timezone, now);
+  const activity = cfg.dayCycle.enabled
+    ? currentActivity(cfg.dayCycle.activities, cfg.dayCycle.timezone, now)
+    : { ...cfg.dayCycle.activities[0]!, activity: "idle" as const, caption: "Having a quiet moment" };
+  const activityRoom = activity.room && cfg.layout.rooms.some((room) => room.id === activity.room)
+    ? activity.room
+    : cfg.layout.startRoom;
+  const roomId = selectedRoom ?? activityRoom;
+  const currentRoom = cfg.layout.rooms.find((item) => item.id === roomId);
+  if (!currentRoom) throw new Error(`Room ${roomId} is not in the apartment layout.`);
+
+  const wallColor = currentRoom.wallColor ?? cfg.room.wallColor;
+  const floorColor = currentRoom.floorColor ?? cfg.room.floorColor;
+  const windowColor = daylight(period) ? cfg.room.windowDaytimeColor : cfg.room.windowNightColor;
+  const isNight = !daylight(period);
+  const tint = isNight ? cfg.lighting.ambientNightColor : cfg.lighting.ambientDayColor;
+  const roomFurniture = renderFurniture(currentRoom, cfg);
+  const props = renderProps(currentRoom, cfg.props, cfg.room.accentColor);
+  const showWindow = currentRoom.furniture.includes("window") && cfg.furniture.window;
+  const avatarInRoom = currentRoom.id === activityRoom;
+  const avatarX = activity.activity === "working" ? 212 : activity.activity === "sleeping" ? 362 : 265;
+  const avatarY = activity.activity === "sleeping" ? 202 : 195;
+  const scheduleCaption = avatarInRoom ? activity.caption : `A quiet ${currentRoom.name.toLowerCase()} · avatar is in the ${cfg.layout.rooms.find((item) => item.id === activityRoom)?.name.toLowerCase() ?? "home"}`;
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 390" role="img" aria-label="${esc(currentRoom.name)} in the Shubur Starter Apartment. ${esc(scheduleCaption)}">
+    <defs>
+      <linearGradient id="ag-wall" x2="0" y2="1"><stop offset="0" stop-color="${wallColor}"/><stop offset="1" stop-color="#bdb8aa"/></linearGradient>
+      <linearGradient id="ag-floor" x2="0" y2="1"><stop offset="0" stop-color="${floorColor}"/><stop offset="1" stop-color="#786752"/></linearGradient>
+      <pattern id="ag-boards" width="68" height="28" patternUnits="userSpaceOnUse"><path d="M0 0H68M0 14H68M33 0v14M10 14v14" stroke="#473d34" stroke-opacity=".2" stroke-width="1.5"/></pattern>
+      <radialGradient id="ag-light"><stop offset="0" stop-color="${cfg.lighting.glowColor}" stop-opacity=".42"/><stop offset="1" stop-color="${cfg.lighting.glowColor}" stop-opacity="0"/></radialGradient>
+    </defs>
+    <rect width="640" height="390" rx="18" fill="#39464a"/>
+    <path d="M0 0H640V205L530 250H110L0 205z" fill="url(#ag-wall)"/>
+    <path d="M0 0l110 205v93L0 245z" fill="#a9a698"/>
+    <path d="M640 0 530 205v93l110-53z" fill="#b5b0a4"/>
+    <path d="M110 205H530L640 390H0z" fill="url(#ag-floor)"/>
+    <path d="M110 205H530L640 390H0z" fill="url(#ag-boards)" opacity=".8"/>
+    <path d="M0 242l110-37v9L0 253zm640 0-110-37v9l110 44z" fill="${cfg.room.accentColor}" opacity=".85"/>
+    ${showWindow ? windowSvg(windowColor, period, cfg.lighting.glowColor) : ""}
+    <ellipse cx="320" cy="257" rx="245" ry="146" fill="url(#ag-light)" opacity="${isNight ? ".28" : ".58"}"/>
+    <g class="ag-apartment__furniture">${roomFurniture}${props}</g>
+    ${avatarInRoom ? buildAvatarSvg(cfg, activity.activity, avatarX, avatarY) : `<text x="320" y="340" text-anchor="middle" fill="#f5f0e2" font-family="system-ui,sans-serif" font-size="15" opacity=".9">The room is quiet right now</text>`}
+    <rect width="640" height="390" rx="18" fill="${tint}" opacity="${isNight ? cfg.lighting.nightDimOpacity : ".06"}" pointer-events="none"/>
+    <path d="M0 0H640V205L530 250H110L0 205z" fill="none" stroke="#293438" stroke-width="3" opacity=".65"/>
+    <text x="24" y="31" fill="#293438" font-family="system-ui,sans-serif" font-size="13" font-weight="700" letter-spacing="1.3">${esc(currentRoom.name.toUpperCase())}</text>
+  </svg>`;
+  return { svg, activity, period, room: currentRoom };
+}
+
+export const APARTMENT_STYLES = `
+.ag-apartment{max-width:760px;color:#25333a;font-family:ui-rounded,"Avenir Next",system-ui,sans-serif}
+.ag-apartment__rooms{display:flex;gap:7px;overflow-x:auto;padding:8px 3px 12px;scrollbar-width:thin}
+.ag-apartment__room{flex:0 0 auto;border:1.5px solid #25333a;border-radius:999px;padding:7px 12px;background:#f5f0e2;color:#25333a;font:inherit;font-size:12px;line-height:1.2;font-weight:650;cursor:pointer}
+.ag-apartment__room[aria-pressed=true]{background:#cfe477;box-shadow:2px 2px 0 #25333a}
+.ag-apartment__room:focus-visible{outline:3px solid #597b72;outline-offset:2px}
+.ag-apartment__stage{overflow:hidden;border:2px solid #25333a;border-radius:18px;background:#39464a;box-shadow:5px 5px 0 #25333a}
+.ag-apartment__stage svg{display:block;width:100%;height:auto}
+.ag-apartment__avatar{transform-box:fill-box;transform-origin:center bottom;animation:ag-bob 2.8s ease-in-out infinite}
+.ag-apartment[data-activity=walking] .ag-apartment__avatar{animation-duration:.55s}
+.ag-apartment__caption{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:12px 2px 5px;font-size:13px;font-weight:650}
+.ag-apartment__time{color:#66726e;font-weight:500}
+.ag-apartment__day{display:flex;height:8px;overflow:hidden;border:1px solid #25333a;border-radius:999px;background:#e5e0d2}
+.ag-apartment__day span{height:100%;border-right:1px solid rgba(37,51,58,.35)}
+@keyframes ag-bob{50%{translate:0 -3px}}
+@media(prefers-reduced-motion:reduce){.ag-apartment__avatar{animation:none}}
+`;
+
 export function activityCssClass(activity: AvatarActivity): string {
   const map: Record<AvatarActivity, string> = {
     sleeping: "ag-activity--sleeping",
@@ -307,5 +389,5 @@ export function activityCssClass(activity: AvatarActivity): string {
     idle: "ag-activity--idle",
     walking: "ag-activity--walking",
   };
-  return map[activity] ?? "ag-activity--idle";
+  return map[activity];
 }

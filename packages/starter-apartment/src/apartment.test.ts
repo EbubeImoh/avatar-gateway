@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { JSDOM } from "jsdom";
+import { mount } from "./index.js";
 import {
   resolveConfig,
   buildSceneSvg,
@@ -13,6 +15,7 @@ import {
   DEFAULT_ROOM_THEME,
   DEFAULT_FURNITURE,
   DEFAULT_DAY_CYCLE,
+  DEFAULT_LAYOUT,
 } from "./types.js";
 import type { ApartmentConfig } from "./types.js";
 
@@ -24,6 +27,7 @@ describe("resolveConfig", () => {
     expect(cfg.avatar).toMatchObject(DEFAULT_AVATAR_LOOK);
     expect(cfg.room).toMatchObject(DEFAULT_ROOM_THEME);
     expect(cfg.furniture).toMatchObject(DEFAULT_FURNITURE);
+    expect(cfg.layout.rooms.map(({ id }) => id)).toEqual(DEFAULT_LAYOUT.rooms.map(({ id }) => id));
     expect(cfg.dayCycle.timezone).toBe("Africa/Lagos");
     expect(cfg.dayCycle.activities.length).toBeGreaterThan(0);
   });
@@ -46,6 +50,22 @@ describe("resolveConfig", () => {
     const cfg = resolveConfig({ gateway: { selector: "#av", backendUrl: "/api" } });
     expect(cfg.gateway?.selector).toBe("#av");
     expect(cfg.gateway?.backendUrl).toBe("/api");
+  });
+
+  it("rejects an unsupported activity before it can enter SVG attributes", () => {
+    const unsafe = {
+      dayCycle: {
+        activities: [{ startHour: 0, endHour: 24, activity: 'idle" onload="alert(1)' as never, caption: "Safe" }],
+      },
+    } satisfies ApartmentConfig;
+    expect(() => resolveConfig(unsafe)).toThrow("activity is not supported");
+  });
+
+  it("rejects unsafe lighting, invalid room references, and unsupported furniture", () => {
+    expect(() => resolveConfig({ lighting: { ambientNightColor: "url(javascript:alert(1))" } })).toThrow("six-digit hex");
+    expect(() => resolveConfig({ props: [{ id: "lamp", room: "studio", kind: "floorLamp", label: "Lamp", x: 50, y: 50 }] })).not.toThrow();
+    expect(() => resolveConfig({ props: [{ id: "lamp", room: "bathroom", kind: "floorLamp", label: "Lamp", x: 50, y: 50 }], layout: { rooms: [DEFAULT_LAYOUT.rooms[0]!], startRoom: "studio" } })).toThrow("not in the layout");
+    expect(() => resolveConfig({ layout: { rooms: [{ id: "studio", name: "Studio", furniture: ["script" as never] }], startRoom: "studio" } })).toThrow("unsupported item");
   });
 });
 
@@ -148,14 +168,35 @@ describe("buildSceneSvg", () => {
 
   it("includes desk SVG when desk furniture is enabled", () => {
     const withDesk = resolveConfig({ furniture: { desk: true } });
-    const { svg } = buildSceneSvg(withDesk);
+    const { svg } = buildSceneSvg(withDesk, new Date("2026-01-01T12:00:00Z"), "studio");
     expect(svg).toContain("Desk");
   });
 
   it("excludes desk SVG when desk furniture is disabled", () => {
     const noDesk = resolveConfig({ furniture: { desk: false } });
-    const { svg } = buildSceneSvg(noDesk);
+    const { svg } = buildSceneSvg(noDesk, new Date("2026-01-01T12:00:00Z"), "studio");
     expect(svg).not.toContain("Desk");
+  });
+
+  it("renders each selected room with its props and layout colors", () => {
+    const custom = resolveConfig({
+      layout: {
+        startRoom: "living",
+        rooms: [{ id: "living", name: "My living room", furniture: ["sofa"], wallColor: "#abcdef" }],
+      },
+      props: [{ id: "my-plant", room: "living", kind: "plant", label: "A <safe> plant", x: 40, y: 65, color: "#123456" }],
+    });
+    const result = buildSceneSvg(custom, new Date("2026-01-01T12:00:00Z"), "living");
+    expect(result.room.name).toBe("My living room");
+    expect(result.svg).toContain("#abcdef");
+    expect(result.svg).toContain("data-furniture=\"sofa\"");
+    expect(result.svg).toContain("A &lt;safe&gt; plant");
+    expect(result.svg).not.toContain("A <safe> plant");
+  });
+
+  it("does not render a room that is absent from the validated layout", () => {
+    const custom = resolveConfig({ layout: { startRoom: "studio", rooms: [DEFAULT_LAYOUT.rooms[0]!] } });
+    expect(() => buildSceneSvg(custom, new Date("2026-01-01T12:00:00Z"), "garage")).toThrow("not in the apartment layout");
   });
 
   it("includes night overlay at night", () => {
@@ -191,5 +232,21 @@ describe("defaults", () => {
 
   it("DEFAULT_DAY_CYCLE timezone is Africa/Lagos", () => {
     expect(DEFAULT_DAY_CYCLE.timezone).toBe("Africa/Lagos");
+  });
+
+  it("mounts an accessible multi-room plain-DOM apartment and cleans it up", () => {
+    const dom = new JSDOM("<!doctype html><html><head></head><body><div id=home><p>Replace me</p></div></body></html>");
+    const host = dom.window.document.querySelector<HTMLElement>("#home")!;
+    const apartment = mount(host, { dayCycle: { enabled: false } });
+    expect(host.querySelectorAll(".ag-apartment__room")).toHaveLength(7);
+    expect(host.querySelector(".ag-apartment__stage svg")?.getAttribute("aria-label")).toContain("Studio");
+    const bedroom = [...host.querySelectorAll<HTMLButtonElement>(".ag-apartment__room")].find((button) => button.textContent === "Bedroom")!;
+    bedroom.click();
+    expect(bedroom.getAttribute("aria-pressed")).toBe("true");
+    expect(host.querySelector(".ag-apartment__stage svg")?.getAttribute("aria-label")).toContain("Bedroom");
+    expect(dom.window.document.querySelector("style[data-shubur-apartment-styles]")).not.toBeNull();
+    apartment.destroy();
+    expect(host.childElementCount).toBe(0);
+    dom.window.close();
   });
 });
