@@ -1,11 +1,18 @@
 # @avatar-gateway/sdk
 
-Placeholder. The one-import core SDK that bundles the widget, client, daily-life behaviours and defaults:
+A small browser widget for rendering an Avatar Gateway avatar card.
 
 ```ts
-import { Avatar } from '@avatar-gateway/sdk';
-Avatar.mount('#avatar', { backend: '/avatar-gateway' });
+import { Avatar } from "@avatar-gateway/sdk";
+
+const avatar = Avatar.mount("#avatar", {
+  backend: "/avatar-gateway",
+  name: "Mira",
+  initialState: "idle",
+});
+
+avatar.setState("busy");
+// Call avatar.destroy() when removing the widget.
 ```
 
-or a single `<script type="module">` tag + `<avatar-host>`. A matching `@avatar-gateway/sdk/server` entry will provide
-the Node middleware (keys, mTLS, owner console, routine scheduler). See [SPEC.md §5.7–5.8](../../SPEC.md).
+`backend` must be a same-origin, root-relative path. The current widget renders its card and presence state locally; it does not yet send chat requests to that backend. No private key or provider key is included in browser code. This package is licensed under Apache-2.0.

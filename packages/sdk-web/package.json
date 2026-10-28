@@ -1,13 +1,28 @@
 {
   "name": "@avatar-gateway/sdk-web",
-  "version": "0.0.0",
-  "private": true,
-  "description": "Embeddable <avatar-host> web component, visitor sandbox and server helper.",
+  "version": "0.2.0",
+  "description": "Web component registration and TypeScript contracts for avatar-host integrations.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
   }
 }

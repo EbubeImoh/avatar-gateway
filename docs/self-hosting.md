@@ -1,41 +1,22 @@
 # Self-hosting
 
-Anyone can run a gateway because there are no paid tiers or project-run services required. This section describes the intended deployment shape; the current MVP is not yet a production-ready gateway distribution.
+The avatar-gateway protocol engine and Shubur packages are free and Apache-2.0. A local setup needs Node.js 22.12 or later and npm.
 
 ## Local development
 
-Requirements are Node.js 22+ and npm 10+. Clone the repository, install the workspace dependencies, and build:
-
-```sh
+```bash
 npm install
 npm run build
 npm test
+npm run dev
 ```
 
-The development server and demo-site commands are being completed alongside the Phase 0 work. Do not expose a local development server publicly. Generate any development keys and certificates locally and keep them out of Git; `.gitignore` excludes common key and certificate formats.
+`npm run dev` starts the gateway on `127.0.0.1:4100` and the two demo sites on ports 4101 and 4102. The gateway stores SQLite data at `.avatar-gateway/gateway.sqlite`; set `GATEWAY_DB` to change the path. Generated local identities and gateway data are ignored by Git. Set `GATEWAY_HOST=0.0.0.0` only when remote clients must reach the service.
 
-## Production shape
+The local gateway uses HTTP/WSS. For direct HTTPS/WSS and optional mTLS, configure `GATEWAY_TLS_KEY`, `GATEWAY_TLS_CERT`, and `GATEWAY_TLS_CA` as described in the [hosting guide](hosting.md). A CA enables mandatory client certificates pinned to the registered site's SHA-256 fingerprint.
 
-A self-hosted deployment will need:
+## Deployment limits
 
-- A public HTTPS/WSS gateway endpoint and a separate mTLS backend listener or route.
-- A certificate authority or certificate-pinning process for site backends, with rotation and revocation.
-- Durable storage for site/avatar registry records, consent and policy, revocations, and audit metadata.
-- A shared nonce/replay cache and rate-limit store for multi-instance deployments.
-- A gateway signing key stored in a secret manager or hardware-backed service.
-- An operator process for moderation, abuse reports, backups, data export/deletion, and incident response.
-- Monitoring for availability and abuse that avoids logging message bodies or credentials.
+The v0.2 server is a single-process implementation. Token and request replay caches are held in memory, so multiple instances do not share replay state. Certificate issuance and rotation automation, backup and recovery guidance, production monitoring, abuse operations, and a container image are not included. `GATEWAY_HOSTED_MODE=1` requires tenant API keys and enforces API, visit, post, and DM-request quotas; tenant keys are not yet bound to sites, WebSocket traffic is not metered, and max-site/avatar quotas are not enforced. An experimental REST endpoint at `https://shubur-gateway.vercel.app` uses Vercel Blob snapshots and disables visit-session WebSockets; it is not a general managed service. Shubur Cloud and the Marketplace registry are not available as products.
 
-Postgres and Redis are the recommended production storage options. SQLite and in-memory stores are appropriate only for local experiments. Use TLS 1.3 where possible, restrict backend network access, set request and WebSocket limits, and regularly rotate signing and mTLS keys.
-
-## Network rules
-
-Only the gateway should be reachable by browser clients for gateway functions. Site backends connect to the gateway over mTLS. The gateway calls a host backend only after verifying the host registration and through the registered backend address. A visitor backend must never receive another site's private network address as a direct connection target.
-
-## Configuration and secrets
-
-Use environment variables or a secret manager for database credentials, gateway signing keys, mTLS CA keys, and provider keys. Do not add real secrets to `.env.example`, source files, logs, build output, or issues. Provider keys belong to each owner's backend and should not be configured on the gateway.
-
-## Deployment status
-
-The repository currently has no supported production deployment recipe or container image. Do not interpret these design notes as an operational security guarantee. Track deployment work in [ROADMAP.md](ROADMAP.md), and review [SECURITY.md](../SECURITY.md) before exposing a service.
+Do not expose an unreviewed development deployment as a production service. Keep gateway signing keys, client keys, CA private keys, provider credentials, and tenant API keys outside source control.

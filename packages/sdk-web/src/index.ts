@@ -1,7 +1,4 @@
-/**
- * @avatar-gateway/sdk-web — placeholder entry point.
- * See SPEC.md §5.2. Private keys never reach the browser.
- */
+/** Browser-side element registration and visitor capability contracts. */
 
 /** Capabilities exposed to a visiting avatar's sandboxed iframe. Nothing else exists. */
 export interface VisitorCapabilities {

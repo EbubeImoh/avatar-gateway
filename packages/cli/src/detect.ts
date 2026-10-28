@@ -1,0 +1,150 @@
+/**
+ * Framework detection for the avatar-gateway CLI init command.
+ * Reads package.json deps from the target directory.
+ */
+
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+
+export type DetectedFramework = "nextjs" | "react-vite" | "vite" | "react" | "plain-html" | "unknown";
+
+export async function detectFramework(cwd: string): Promise<DetectedFramework> {
+  try {
+    const raw = await readFile(join(cwd, "package.json"), "utf8");
+    const pkg = JSON.parse(raw) as { dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
+    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+
+    if ("next" in deps) return "nextjs";
+    if ("vite" in deps && "react" in deps) return "react-vite";
+    if ("vite" in deps) return "vite";
+    if ("react" in deps) return "react";
+    return "plain-html";
+  } catch {
+    return "plain-html";
+  }
+}
+
+export interface ScaffoldFiles {
+  /** Map of relative file path → file content to write. */
+  files: Record<string, string>;
+  /** npm packages to install. */
+  packages: string[];
+  /** Post-install instructions. */
+  instructions: string[];
+}
+
+export interface LifeScaffoldConfig {
+  agentId: string;
+  startedAt: string;
+}
+
+/**
+ * Returns the scaffold files for a given framework.
+ * Generates minimal, working code that mounts the apartment + Avatar.mount.
+ */
+export function buildScaffold(
+  framework: DetectedFramework,
+  avatarName: string,
+  backendPath: string,
+  life: LifeScaffoldConfig = { agentId: `local:${avatarName}`, startedAt: new Date().toISOString() },
+): ScaffoldFiles {
+  const common = {
+    packages: [
+      "shubur@^0.2.0",
+      "@avatar-gateway/sdk@^0.2.0",
+      "@avatar-gateway/sdk-web@^0.2.0",
+      "@avatar-gateway/starter-apartment@^0.2.0",
+      "@avatar-gateway/gateway@^0.2.0",
+      "@avatar-gateway/avatar-runtime@^0.2.0",
+      "@avatar-gateway/marketplace@^0.2.0",
+      "@avatar-gateway/plugin-api@^0.2.0",
+      "@avatar-gateway/shubur@^0.2.0",
+      "@shubur/life@^0.2.0",
+    ],
+    instructions: [
+      `Set your provider key in the environment (see .env.example).`,
+      `Start the gateway with: npm run shubur:gateway`,
+      `Open the generated Shubur apartment page and follow its setup notes.`,
+    ],
+  };
+  const packages = framework === "plain-html" ? [...common.packages, "vite@^6.0.0"] : common.packages;
+
+  const quickstart = `# Shubur quick setup\n\nHave you ever wondered what your agent would be doing if it had a life of its own?\n\nThis project includes a generic Starter Apartment, an emergent needs-driven home routine, a local avatar identity, and a Shubur profile draft. The private keys are stored in .avatar-gateway/config.json.\n\nSet the provider key in your shell (for example, OPENAI_API_KEY) before starting your app. The key is read from the environment and is not written to project files.\n\nUse \`npx shubur@latest life status\` to inspect local activity, needs, mood, and skills. The life view uses no LLM or network request.\n\nSelf-hosted gateway: run npm run shubur:gateway. Hosted REST gateway: select \`--mode hosted\`; the default URL is https://shubur-gateway.vercel.app and registration needs an operator-issued tenant key. Chat relay WebSockets require a self-hosted gateway.\n`;
+
+  switch (framework) {
+    case "nextjs":
+      return {
+        ...common,
+        packages,
+        files: {
+          "app/avatar/page.tsx": `"use client";
+import { useEffect, useMemo, useRef } from "react";
+import { Avatar } from "@avatar-gateway/sdk";
+import { createLifeSimulation } from "@shubur/life";
+import { ApartmentScene } from "@avatar-gateway/starter-apartment/react";
+export default function AvatarPage() {
+  const avatarHost = useRef<HTMLDivElement>(null);
+  const life = useMemo(() => createLifeSimulation({ agentId: ${JSON.stringify(life.agentId)}, seed: ${JSON.stringify(life.agentId)}, startedAt: new Date(${JSON.stringify(life.startedAt)}) }), []);
+  useEffect(() => {
+    if (!avatarHost.current) return;
+    const mounted = Avatar.mount(avatarHost.current, { backend: ${JSON.stringify(backendPath)}, name: ${JSON.stringify(avatarName)} });
+    return () => mounted.destroy();
+  }, []);
+  return <main><ApartmentScene config={{ avatar: { name: ${JSON.stringify(avatarName)} } }} activitySource={life} /><div ref={avatarHost} /></main>;
+}`,
+          "SHUBUR_QUICKSTART.md": quickstart,
+        },
+      };
+
+    case "react-vite":
+    case "react":
+      return {
+        ...common,
+        packages,
+        files: {
+          "src/AvatarHome.tsx": `import { ApartmentScene } from "@avatar-gateway/starter-apartment/react";
+import { useEffect, useMemo, useRef } from "react";
+import { Avatar } from "@avatar-gateway/sdk";
+import { createLifeSimulation } from "@shubur/life";
+export function AvatarHome() {
+  const avatarHost = useRef<HTMLDivElement>(null);
+  const life = useMemo(() => createLifeSimulation({ agentId: ${JSON.stringify(life.agentId)}, seed: ${JSON.stringify(life.agentId)}, startedAt: new Date(${JSON.stringify(life.startedAt)}) }), []);
+  useEffect(() => {
+    if (!avatarHost.current) return;
+    const mounted = Avatar.mount(avatarHost.current, { backend: ${JSON.stringify(backendPath)}, name: ${JSON.stringify(avatarName)} });
+    return () => mounted.destroy();
+  }, []);
+  return <main><ApartmentScene config={{ avatar: { name: ${JSON.stringify(avatarName)} } }} activitySource={life} /><div ref={avatarHost} /></main>;
+}`,
+          "SHUBUR_QUICKSTART.md": quickstart,
+        },
+      };
+
+    case "vite":
+    case "plain-html":
+    default:
+      return {
+        ...common,
+        packages,
+        files: {
+          [framework === "plain-html" ? "index.html" : "avatar.html"]: `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Shubur avatar apartment</title></head>
+<body>
+  <div id="apartment"></div>
+  <div id="avatar"></div>
+  <script type="module">
+    import { mount } from "@avatar-gateway/starter-apartment";
+    import { createLifeSimulation } from "@shubur/life";
+    import { Avatar } from "@avatar-gateway/sdk";
+    const life = createLifeSimulation({ agentId: ${JSON.stringify(life.agentId)}, seed: ${JSON.stringify(life.agentId)}, startedAt: new Date(${JSON.stringify(life.startedAt)}) });
+    mount("#apartment", { avatar: { name: ${JSON.stringify(avatarName)} } }, life);
+    Avatar.mount("#avatar", { backend: ${JSON.stringify(backendPath)}, name: ${JSON.stringify(avatarName)} });
+  </script>
+</body>
+</html>`,
+          "SHUBUR_QUICKSTART.md": quickstart,
+        },
+      };
+  }
+}

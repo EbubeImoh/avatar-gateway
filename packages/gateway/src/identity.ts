@@ -22,6 +22,14 @@ export function generateIdentity(): Ed25519Identity {
   return { privateKeyPem, publicKeyPem, did: didKeyFromPublicKey(publicKey) };
 }
 
+export function identityFromPrivateKeyPem(privateKeyPem: string): Ed25519Identity {
+  const privateKey = createPrivateKey(privateKeyPem);
+  if (privateKey.asymmetricKeyType !== "ed25519") throw new TypeError("Expected an Ed25519 private key");
+  const publicKey = createPublicKey(privateKey);
+  const publicKeyPem = publicKey.export({ format: "pem", type: "spki" }).toString();
+  return { privateKeyPem, publicKeyPem, did: didKeyFromPublicKey(publicKey) };
+}
+
 /** Build a did:key for an Ed25519 SPKI key using the multicodec/multibase form. */
 export function didKeyFromPublicKey(publicKey: string | Buffer | KeyObject): string {
   const key = typeof publicKey === "string" || Buffer.isBuffer(publicKey)

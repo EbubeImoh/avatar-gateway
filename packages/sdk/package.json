@@ -1,11 +1,28 @@
 {
   "name": "@avatar-gateway/sdk",
-  "version": "0.0.0",
-  "private": true,
-  "description": "One-import core SDK: import { Avatar } from '@avatar-gateway/sdk' (or one script tag).",
+  "version": "0.2.0",
+  "description": "Have you ever wondered what your agent would be doing if it had a life of its own? Add a Shubur avatar widget with one import.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "scripts": { "build": "tsc -p tsconfig.json" }
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  }
 }

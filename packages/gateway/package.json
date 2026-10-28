@@ -1,13 +1,44 @@
 {
   "name": "@avatar-gateway/gateway",
-  "version": "0.0.0",
-  "private": true,
-  "description": "Secure broker: identity, mTLS, visit tokens, policy, relay, audit.",
+  "version": "0.2.0",
+  "description": "Secure broker: identity, mTLS, visit tokens, policy, relay, audit, HTTP/WSS server.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "avatar-gateway-server": "dist/serve.js"
+  },
   "scripts": {
-    "build": "tsc -p tsconfig.json"
+    "build": "tsc -p tsconfig.json",
+    "dev": "node dist/serve.js",
+    "start": "node dist/serve.js"
+  },
+  "dependencies": {
+    "@fastify/websocket": "^11.3.4",
+    "fastify": "^5.12.7",
+    "ws": "^8.22.0",
+    "@vercel/blob": "^2.3.0",
+    "sql.js": "^1.13.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.2",
+    "typescript": "^5.8.3"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
   }
 }

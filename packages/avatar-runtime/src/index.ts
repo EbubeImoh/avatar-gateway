@@ -1,7 +1,10 @@
 /**
- * @avatar-gateway/avatar-runtime — placeholder entry point.
- * See SPEC.md §5.3 (runtime), §5.6 (owner channel & knowledge split), §10.1 (privacy prompt).
+ * @avatar-gateway/avatar-runtime — LLM-backed persona runtime.
+ * See SPEC.md §5.3, §5.6, §10.1.
  */
+
+export * from "./providers/openai.js";
+export * from "./providers/anthropic.js";
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
@@ -9,8 +12,8 @@ export interface ChatMessage {
 }
 
 /**
- * Provider abstraction: OpenAI-compatible, Anthropic, Google, Ollama, mock...
- * BYO key: the owner's API key is read on the home backend only and paid directly to the provider.
+ * Provider abstraction: OpenAI-compatible, Anthropic, and mock providers.
+ * BYO key: the owner's API key is read on the home backend only.
  */
 export interface LLMProvider {
   readonly id: string;
@@ -80,6 +83,30 @@ export function buildContext(persona: Persona, mode: Mode, input: string): ChatM
 export class MockProvider implements LLMProvider {
   readonly id = "mock";
   async complete(messages: ChatMessage[]): Promise<string> {
-    return `(mock reply to ${messages.length} messages)`;
+    const last = [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
+    return `(mock reply to: ${last.slice(0, 60)})`;
+  }
+}
+
+/** AvatarRuntime ties together persona, knowledge, LLM provider, and context building. */
+export class AvatarRuntime {
+  constructor(
+    private readonly persona: Persona,
+    private readonly provider: LLMProvider,
+  ) {}
+
+  async chat(input: string, mode: Mode = "agent-world"): Promise<string> {
+    const messages = buildContext(this.persona, mode, input);
+    return this.provider.complete(messages);
+  }
+
+  /** Owner channel: full knowledge, private context */
+  async ownerChat(input: string): Promise<string> {
+    return this.chat(input, "owner-channel");
+  }
+
+  /** Agent world: public knowledge only, untrusted input wrapping */
+  async agentChat(input: string): Promise<string> {
+    return this.chat(input, "agent-world");
   }
 }

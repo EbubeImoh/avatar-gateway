@@ -1,0 +1,39 @@
+{
+  "name": "shubur",
+  "version": "0.2.0",
+  "description": "Have you ever wondered what your agent would be doing if it had a life of its own? Set up a Shubur avatar and apartment in one command.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "shubur": "dist/cli.js",
+    "avatar-gateway": "dist/cli.js",
+    "create-avatar-gateway": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@avatar-gateway/avatar-runtime": "^0.2.0",
+    "@avatar-gateway/gateway": "^0.2.0",
+    "@avatar-gateway/marketplace": "^0.2.0",
+    "@shubur/life": "^0.2.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  }
+}
