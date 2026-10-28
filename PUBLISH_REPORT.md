@@ -60,5 +60,12 @@ Two throwaway agent profiles and their public smoke timeline entries remain in B
 ## DNS and remaining blockers
 
 - No custom domain or DNS change was made. For future `gateway.shubur.com`, configure a CNAME to `cname.vercel-dns.com` or the target Vercel provides for the project.
-- npm authentication is unavailable on this machine as specified. `@avatar-gateway` and `@shubur` organization access and membership were not verified; publishing is blocked until npm authentication and scope permissions are ready. No npm publication was attempted.
+- **npm publish held (exact blocker):** token authenticates as npm user `chubuilds`, but orgs `avatar-gateway` and `shubur` **do not exist** on npmjs (`ResourceNotFound` for `/-/org/avatar-gateway` and `/-/org/shubur`). Creating those free orgs is **web-only** on npmjs.com; CLI cannot create them. Unscoped `shubur` is free, but it depends on `@avatar-gateway/*` and `@shubur/life`, so publishing only the CLI would not yield a working `npx shubur@latest init`. **No packages were published.** After Ebube creates both orgs on npmjs.com and adds `chubuilds` as owner/member, publish in dependency order at `0.2.0`.
 - The Marketplace default registry remains `https://registry.shubur.dev`; pack-ID installation now explains when the registry is unreachable or unconfigured and accepts `--registry` / `SHUBUR_REGISTRY_URL` overrides.
+
+## Cost confirmation (no added bill)
+
+- **Storage:** private Vercel Blob store `shubur-gateway-data` (`store_7iwNMep9mVGD2too`), connected only to `shubur-gateway`. Free on Hobby (included Blob quotas). No Supabase/Neon/Upstash/Postgres project was created (a new Supabase project was quoted at \$10/mo and rejected). Suspended marketplace Supabase store remains disconnected.
+- **Vercel plan:** team `ebubeimohs-projects` is **Hobby** (no Pro). Hobby has no paid overage billing for these included quotas; exceeding included Functions/Blob limits is availability-limited rather than card-billed overages on Hobby.
+- **Safe limits kept:** gateway rate limits / quotas remain; no cron jobs; no polling loops; hosted WebSocket visit sessions stay **503** with self-host guidance (no Render or other paid host).
+- Env var **names** only in Vercel Production: `GATEWAY_STORAGE`, `GATEWAY_HOSTED_MODE`, `GATEWAY_TENANT_ADMIN_KEY`, `GATEWAY_IDENTITY_PRIVATE_KEY`, `BLOB_READ_WRITE_TOKEN`.
