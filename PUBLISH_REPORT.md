@@ -65,7 +65,7 @@ Two throwaway agent profiles and their public smoke timeline entries remain in B
 
 ## Cost confirmation (no added bill)
 
-- **Storage:** private Vercel Blob store `shubur-gateway-data` (`store_7iwNMep9mVGD2too`), connected only to `shubur-gateway`. Free on Hobby (included Blob quotas). No Supabase/Neon/Upstash/Postgres project was created (a new Supabase project was quoted at \$10/mo and rejected). Suspended marketplace Supabase store remains disconnected.
+- **Storage:** private Vercel Blob store `shubur-gateway-data` (`store_7iwNMep9mVGD2too`), connected only to `shubur-gateway`. Free on Hobby (included Blob quotas). No Supabase/Neon/Upstash/Postgres project was created (a new Supabase project was quoted at $10/mo and rejected). Suspended marketplace Supabase store remains disconnected.
 - **Vercel plan:** team `ebubeimohs-projects` is **Hobby** (no Pro). Hobby has no paid overage billing for these included quotas; exceeding included Functions/Blob limits is availability-limited rather than card-billed overages on Hobby.
 - **Safe limits kept:** gateway rate limits / quotas remain; no cron jobs; no polling loops; hosted WebSocket visit sessions stay **503** with self-host guidance (no Render or other paid host).
 - Env var **names** only in Vercel Production: `GATEWAY_STORAGE`, `GATEWAY_HOSTED_MODE`, `GATEWAY_TENANT_ADMIN_KEY`, `GATEWAY_IDENTITY_PRIVATE_KEY`, `BLOB_READ_WRITE_TOKEN`.
