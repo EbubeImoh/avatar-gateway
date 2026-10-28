@@ -335,10 +335,13 @@ items:
 ### 5.7 Daily life & autonomy ("lives its day")
 
 **Implemented in Layer 1 (`@shubur/life`):** a local hourly simulation models energy, hunger, social, fitness,
-curiosity, symbolic money pressure, and fun (0 = satisfied; 100 = urgent), plus personality traits, mood, and
-practice-based skills. A seeded utility loop weighs need relief, traits, time of day, and a small deterministic
-tie-breaker to choose among home actions such as sleeping, making coffee, working, eating, stretching, reading,
-and relaxing. The Starter Apartment can use the selected activity as its day-cycle source. The CLI and MCP expose a
+curiosity, symbolic money pressure, fun, and hygiene (0 = satisfied; 100 = urgent), plus personality traits, mood,
+and practice-based skills. The home is the owner's own `ApartmentConfig`: its rooms and objects define what the agent
+can do. Objects carry physical constraints (capacity, carryable, features, on/off state) and soft hints about their
+usual use; every action is a tool those objects expose, with bare fallbacks such as resting on the floor. A
+pluggable chooser picks among the available tools; the default is a seeded utility chooser weighing need relief,
+traits, comfort, effort, and momentum. No routine or activity is scripted. The Starter Apartment can use the
+selected activity as its day-cycle source. The CLI and MCP expose a
 read-only snapshot of current activity, needs, mood, and skills.
 
 The simulation takes an injected clock and seed, uses the local timezone, and replays from a local start time. It

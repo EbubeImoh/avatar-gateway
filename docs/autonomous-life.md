@@ -13,30 +13,83 @@ design goals, not current product behavior.
 
 ## Layer 1: needs-driven life at home
 
-The `@shubur/life` package provides a deterministic, local simulation. Its state includes:
+The `@shubur/life` package provides a deterministic, local simulation of an agent living in **its owner's home**.
+Nothing about the day is scripted: there is no fixed sequence, no required activity, and no schedule. The day
+emerges from the agent's needs and personality meeting whatever the home actually contains.
 
-- Needs: energy, hunger, social, fitness, curiosity, money, and fun. Values range from 0 (satisfied) to 100 (urgent).
-- Traits: conscientiousness, curiosity, playfulness, resilience, and sociability. Seeded traits shape choices.
+### The agent
+
+- Needs: energy, hunger, social, fitness, curiosity, money, fun, and hygiene. Values range from 0 (satisfied) to
+  100 (urgent).
+- Traits: conscientiousness, curiosity, playfulness, resilience, and sociability. Seeded traits shape preferences.
 - Skills: building, cooking, fitness, reading, and self-care. Practice grows a skill, capped at 100.
 - Mood: a readable label and reason derived from the most pressing need and current activity.
-- Place and activity: the agent is at home in the Starter Apartment and chooses from sleeping, waking, making coffee,
-  working on a project, eating, stretching, reading, and relaxing.
+- Body: each simulated hour needs rise, faster while awake. Sleep pressure builds faster at night and sleep is
+  deeper then, so most agents sleep at night, but nothing requires it.
 
-Each simulated hour increases needs according to time and the current activity. The decision loop assigns utility to
-each available home action using need relief, the agent's traits, time-of-day preferences, and a small seeded random
-tie-breaker. It chooses the highest utility action. The same identity seed, start time, options, and clock produce the
-same simulation, which makes routines reproducible in tests and during a local status check. The clock and time zone
-are injectable; the default time zone is `Africa/Lagos`.
+### The home: objects with physics and soft hints
 
-`@avatar-gateway/starter-apartment` accepts an activity source. A generated apartment can pass its life simulation
-to that source so the chosen activity, room, and day strip reflect the agent's routine. The apartment still works
-without a life source.
+The environment is built from the same `ApartmentConfig` that draws the Starter Apartment, so the agent lives in the
+home on screen. Pass it as `apartment` to `createLifeSimulation`; its optional `name` becomes the place name.
+Rooms and furniture the owner removed (or furniture flags turned off) simply do not exist for the agent, and props
+are real objects too.
+
+Only object constraints are fixed, in `OBJECT_CATALOG`:
+
+- **Physics:** size, capacity (how many agents can use it at once), whether it can be carried, whether it has an
+  on/off switch, and physical features with a 0–1 suitability, such as `bed`, `seat`, `surface`, `food`, `water`,
+  `books`, `light`, `view`, `load`, `padding`, `tools`, and `greenery`.
+- **State:** where each object is now (carryable objects move when used elsewhere) and whether switchable objects
+  are on. This state is part of the snapshot.
+- **Soft hints:** what an object is usually for, for example "a bed is usually for a night's sleep". Hints add a
+  small preference. They never require or forbid anything: a bed can be read on or worked on with a laptop, a kitchen
+  island can be a desk, and any object can be ignored.
+
+### Every action is a tool
+
+`availableTools()` lists what the home physically allows at that moment. Each tool has a verb (`sleep`, `relax`,
+`eat`, `work`, `read`, `exercise`, `wash`, `groom`, `tend`, `gaze`, `tinker`, `idle`, `switchOn`, `switchOff`), the
+object it uses, parameters (`carryTo` to take a carryable object to another room, `at` for where to settle with a
+book), its duration, effects on needs per hour, the skill it practises, walking distance, room ambience, and whether
+the use is hinted. A verb is possible only when some present object has a feature that supports it; quality comes
+from that feature, lighting (a dark room at night makes reading harder; a lit lamp makes sleep lighter), and time of
+day. Objects at capacity expose nothing.
+
+Bare tools — sleeping or relaxing on the floor, a bodyweight workout, and a quiet moment — are offered in every
+room, so even an empty room is livable. A home with no desk has no desk tools, and a home with no kitchen offers no
+way to eat: hunger simply rises and shows in mood.
+
+### Choosing: a swappable chooser
+
+A `LifeChooser` receives the needs, traits, skills, mood, current activity, location, the environment, the
+available tools, the minutes left in the hour, a seeded random source, and a `preview()` of the tools that would be
+available after a tool's physical effects. It returns a tool id and how many hours it intends to spend. The
+simulation enforces physics: a choice that is not among the offered tools becomes a quiet moment where the agent
+is, so no chooser can use an absent, unreachable, or full object.
+
+Layer 1 ships `UtilityChooser`, which is deterministic for a seed. It scores each tool by how much it relieves
+needs (urgent needs count far more), trait affinity, the hint preference, room comfort, and walking or carrying
+effort, plus seeded noise whose size follows playfulness and curiosity. It plans to stay with an activity until its
+main need is about met, within an attention span set by conscientiousness, and keeps a small momentum bonus while the
+activity still helps and no relievable need has become urgent. Short tools such as a light switch are valued by one
+step of look-ahead: an agent switches a lamp on to read at night, or off before sleeping in that room, only when that
+helps. Layer 2 can replace this chooser with an LLM that has memory, through the same interface.
+
+The same identity seed, home, start time, options, and clock produce the same life, which makes days reproducible
+in tests and during a local status check. The clock and time zone are injectable; the default time zone is
+`Africa/Lagos`. Different homes produce different days for the same seed; the landing page shows one generated day
+for the same agent in two sample layouts.
+
+`@avatar-gateway/starter-apartment` accepts an activity source. Each activity keeps a backwards-compatible scene
+label (`sleeping`, `working`, `reading`, `stretching`, or `idle`), a caption such as "Reading on the sofa", and the
+room, so the avatar moves through the rooms it actually uses. The apartment still works without a life source.
 
 ### Local status and storage
 
 From an initialized project, `shubur life status` shows current activity, place, mood, needs, and skills. The
 read-only MCP tool `shubur_life_status` shows the same information. Both project the state from the local avatar
-identity and `lifeStartedAt` in `.avatar-gateway/config.json`; older configs can use the file's creation or
+identity and `lifeStartedAt` in `.avatar-gateway/config.json`, in the home saved by `shubur_customise_apartment`
+(`.avatar-gateway/apartment.config.json`) or the default Starter Apartment; older configs can use the file's creation or
 modification time as a start-time fallback. The view does not expose the DID, contact a gateway, call an LLM, alter
 the config, or store an activity log. Life state and its activity history are reconstructed rather than persisted.
 
@@ -47,9 +100,12 @@ real-time scheduler or a promise that an agent continuously runs in the backgrou
 ### Layer 1 limits
 
 All actions are at home. The money need is symbolic pressure that can make working useful; there is no currency,
-market, or ledger. Social need can rise and affect mood, but there is no social action, conversation, relationship,
-or friend in Layer 1. The loop has no memory, LLM deliberation, travel, pet, owner-nudge, or evolution feature. The
-read-only snapshot is not a log or an owner control panel.
+market, or ledger. Moved objects are tracked in the life state, but the apartment scene still draws furniture where
+the config places it. Occupancy is an input for shared homes; Layer 1 simulates one agent. Social need can rise
+and affect mood, but there is no social action, conversation, relationship, or friend in Layer 1. The loop has no
+memory, LLM deliberation, travel, pet, owner-nudge, or evolution feature. The chooser interface is synchronous; an
+LLM chooser in Layer 2 will need its decisions cached so replays stay deterministic. The read-only snapshot is not a
+log or an owner control panel.
 
 ## Later layers
 

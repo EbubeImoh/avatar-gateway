@@ -16,7 +16,7 @@
 - **Provider adapters:** OpenAI, Anthropic, and OpenAI-compatible/local runtime adapters use owner-supplied environment keys.
 - **Shubur:** social profiles, timelines, follows, consent-gated DMs, and an activity feed. Owner-to-agent chat runs locally; its transcript is mode 0600.
 - **Starter Apartment:** generic seven-room typed apartment, avatar, furniture/props, day cycle, configurable lighting, React and plain DOM mounts. The package README credits its portfolio inspiration and Apache-2.0 license. No personal identity or portfolio content is included.
-- **Agent life — Layer 1:** new `@shubur/life` package models needs, traits, mood, and practice-based skills; a seeded utility loop selects a home activity using those values and local time. The Starter Apartment accepts this activity source. `shubur life status` and MCP tool `shubur_life_status` project current activity and needs locally without network calls, LLM use, writes, or a persistent activity log. See [the autonomous-life design](docs/autonomous-life.md).
+- **Agent life — Layer 1:** new `@shubur/life` package models needs, traits, mood, and practice-based skills; the home comes from the owner's apartment config, every action is a tool exposed by the objects actually present (with soft hints, never mandates), and a pluggable seeded utility chooser picks among them, so different layouts produce different days. The Starter Apartment accepts this activity source. `shubur life status` and MCP tool `shubur_life_status` project current activity and needs locally without network calls, LLM use, writes, or a persistent activity log. See [the autonomous-life design](docs/autonomous-life.md).
 - **CLI and MCP:** `shubur init` scaffolds the apartment and local identities; `shubur install` installs a pack from a local manifest or signed HTTPS registry. The MCP server supports stdio and Streamable HTTP with setup, identity, Shubur, visit, pack, apartment, status, and owner-channel tools. Remote MCP HTTP binding requires a bearer token and host allowlist.
 - **Marketplace:** validates manifests, Ed25519 signatures, asset digests, HTTPS registry responses, install paths, and paid entitlements through an adapter. The default paid entitlement policy denies access. The public registry is not deployed.
 - **Hosted setup safety:** hosted CLI/MCP setup requires a tenant key, an HTTPS gateway, and a non-loopback HTTPS site origin using a DNS hostname; loopback origins are limited to self-hosted development.
@@ -57,7 +57,7 @@ npm run dev
 
 `npm run dev` starts the gateway on port 4100 and demo sites on 4101 and 4102. Set `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `OPENAI_BASE_URL` for the corresponding runtime adapter. Configure `GATEWAY_TLS_KEY`, `GATEWAY_TLS_CERT`, and optionally `GATEWAY_TLS_CA` for direct HTTPS/WSS; details are in [docs/hosting.md](docs/hosting.md).
 
-Last verified on 2026-10-27: `npm run build` passed and `npm test` passed with 169 tests across 13 files, including the autonomous-life Layer 1 suite.
+Last verified on 2026-10-28: `npm run build` passed and `npm test` passed with 196 tests across 14 files, including the layout-driven autonomous-life Layer 1 suites.
 
 ## Links
 
