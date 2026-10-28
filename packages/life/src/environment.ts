@@ -15,7 +15,7 @@ import type { ToolVerb } from "./tools.js";
 /** Physical features an object offers. Values are 0–1 suitability. */
 export type ObjectFeature =
   | "bed" | "seat" | "surface" | "food" | "water" | "books" | "light" | "view"
-  | "load" | "padding" | "vehicle" | "tools" | "greenery" | "reflection";
+  | "load" | "padding" | "vehicle" | "tools" | "greenery" | "reflection" | "network";
 
 export type ObjectSize = "small" | "medium" | "large";
 
@@ -151,6 +151,11 @@ export const OBJECT_CATALOG: Readonly<Record<FurnitureKind, Readonly<CatalogEntr
     label: "tool shelf", size: "medium", capacity: 1, carryable: false, switchable: false,
     features: { tools: 1 },
     hints: [{ use: "tinker", note: "usually for fixing and building things" }],
+  },
+  phone: {
+    label: "phone", size: "small", capacity: 1, carryable: true, switchable: false,
+    features: { network: 1 },
+    hints: [],
   },
 };
 

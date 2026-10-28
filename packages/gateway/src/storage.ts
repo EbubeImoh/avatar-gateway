@@ -25,6 +25,7 @@ export interface AvatarRecord {
   look: Record<string, unknown>;
   travelEnabled: boolean;
   maxVisitsPerDay: number;
+  networkScopes?: Scope[];
   createdAt: string;
 }
 
@@ -242,6 +243,7 @@ export class GatewayStorage {
         look TEXT NOT NULL DEFAULT '{}',
         travel_enabled INTEGER NOT NULL DEFAULT 1,
         max_visits_per_day INTEGER NOT NULL DEFAULT 10,
+        network_scopes TEXT NOT NULL DEFAULT '["profile:write","timeline:read","timeline:post","follow:write","dm:send","dm:receive","feed:read","block:write"]',
         created_at TEXT NOT NULL
       );
 
@@ -420,6 +422,12 @@ export class GatewayStorage {
     if (!dmThreadColumns.has("intro")) {
       this.db.exec("ALTER TABLE dm_threads ADD COLUMN intro TEXT NOT NULL DEFAULT ''");
     }
+    const avatarColumns = new Set(
+      (this.db.pragma("table_info(avatars)") as Array<{ name: string }>).map((column) => column.name),
+    );
+    if (!avatarColumns.has("network_scopes")) {
+      this.db.exec(`ALTER TABLE avatars ADD COLUMN network_scopes TEXT NOT NULL DEFAULT '["profile:write","timeline:read","timeline:post","follow:write","dm:send","dm:receive","feed:read","block:write"]'`);
+    }
 
     // Load chain head from last audit event
     const last = this.db.prepare<[], { hash: string }>("SELECT hash FROM audit_events ORDER BY ts DESC LIMIT 1").get();
@@ -487,12 +495,14 @@ export class GatewayStorage {
     this.db.prepare(`
       INSERT OR REPLACE INTO avatars
         (avatar_did, site_did, name, public_key_pem, public_bio, look,
-         travel_enabled, max_visits_per_day, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         travel_enabled, max_visits_per_day, network_scopes, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       record.avatarDid, record.siteDid, record.name, record.publicKeyPem,
       record.publicBio, JSON.stringify(record.look),
-      record.travelEnabled ? 1 : 0, record.maxVisitsPerDay, record.createdAt,
+      record.travelEnabled ? 1 : 0, record.maxVisitsPerDay,
+      JSON.stringify(record.networkScopes ?? ["profile:write", "timeline:read", "timeline:post", "follow:write", "dm:send", "dm:receive", "feed:read", "block:write"]),
+      record.createdAt,
     );
   }
 
@@ -516,6 +526,7 @@ export class GatewayStorage {
       look: JSON.parse(row.look as string) as Record<string, unknown>,
       travelEnabled: (row.travel_enabled as number) === 1,
       maxVisitsPerDay: row.max_visits_per_day as number,
+      networkScopes: JSON.parse(row.network_scopes as string) as Scope[],
       createdAt: row.created_at as string,
     };
   }
@@ -1059,6 +1070,13 @@ export class GatewayStorage {
       createdAt: r.created_at as string,
       signature: r.signature as string,
     }));
+  }
+
+  getNextDmSequence(threadId: string): number {
+    const row = this.db.prepare<[string], { next_seq: number }>(
+      "SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq FROM dm_messages WHERE thread_id = ?",
+    ).get(threadId);
+    return row?.next_seq ?? 1;
   }
 
   // --- Activity feed ---

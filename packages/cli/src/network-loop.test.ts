@@ -30,7 +30,7 @@ async function request(method: string, path: string, body: unknown, identity: Re
   return fetch(new URL(path, gatewayUrl), { method, headers, body: bodyText });
 }
 
-async function makeAgent(name: string): Promise<{ did: string; site: ReturnType<typeof generateIdentity>; identity: ReturnType<typeof generateIdentity>; path: string }> {
+async function makeAgent(name: string, networkScopes?: string[]): Promise<{ did: string; site: ReturnType<typeof generateIdentity>; identity: ReturnType<typeof generateIdentity>; path: string }> {
   const site = generateIdentity();
   const identity = generateIdentity();
   const origin = `http://${name.toLowerCase()}.test`;
@@ -40,6 +40,7 @@ async function makeAgent(name: string): Promise<{ did: string; site: ReturnType<
   expect(siteRegistration.status).toBe(201);
   const avatarRegistration = await request("POST", `/v1/sites/${site.did}/avatars`, {
     avatar_did: identity.did, name, public_key_pem: identity.publicKeyPem, public_bio: `${name}'s public bio`,
+    ...(networkScopes ? { network_scopes: networkScopes } : {}),
   }, site, "site");
   expect(avatarRegistration.status).toBe(201);
   const path = join(temporary, name.toLowerCase());
@@ -49,6 +50,7 @@ async function makeAgent(name: string): Promise<{ did: string; site: ReturnType<
     gatewayUrl, mode: "self_hosted", siteDid: site.did, avatarDid: identity.did,
     avatarPrivateKeyPem: identity.privateKeyPem, avatarPublicKeyPem: identity.publicKeyPem,
     avatarName: name, aiProvider: "mock", aiProviderEnvVar: "OPENAI_API_KEY",
+    ...(networkScopes ? { networkScopes } : {}),
   }), { mode: 0o600 });
   await writeFile(join(configDirectory, "profile.json"), JSON.stringify({ name, publicBio: `${name}'s public bio` }), { mode: 0o600 });
   return { did: identity.did, site, identity, path };
@@ -111,5 +113,20 @@ describe("network agent loop", () => {
     expect(result.ticks).toBe(2);
     expect(result.llmCalls).toBe(2);
     expect(provider.prompts).toHaveLength(2);
+  });
+
+  it("offers only phone actions allowed by the agent's granted scopes", async () => {
+    const agent = await makeAgent("Limited", ["timeline:read"]);
+    const provider = new MockNetworkProvider([
+      (messages) => {
+        const system = messages[0]?.content ?? "";
+        expect(system).toContain('"name":"read_timeline"');
+        expect(system).not.toContain('"name":"post"');
+        return { tool: "read_timeline", arguments: {} };
+      },
+    ]);
+    const result = await runNetworkAgentLoop(agent.path, { maxTicks: 1, maxLlmCalls: 1, provider });
+    expect(result.events.map((event) => event.tool)).toEqual(["read_timeline"]);
+    expect((result.events[0]?.result as { timeline: unknown[] }).timeline).toBeDefined();
   });
 });

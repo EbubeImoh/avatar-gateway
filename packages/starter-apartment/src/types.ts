@@ -23,7 +23,7 @@ export type RoomId = "studio" | "living" | "kitchen" | "bedroom" | "bathroom" | 
 
 export type FurnitureKind =
   | "desk" | "bed" | "bookshelf" | "plant" | "window" | "floorLamp" | "coffeeTable"
-  | "sofa" | "island" | "sink" | "shower" | "mirror" | "weights" | "mat" | "car" | "toolShelf";
+  | "sofa" | "island" | "sink" | "shower" | "mirror" | "weights" | "mat" | "car" | "toolShelf" | "phone";
 
 export interface ApartmentRoom {
   id: RoomId;
@@ -35,7 +35,7 @@ export interface ApartmentRoom {
 }
 
 export interface ApartmentLayout {
-  /** Room shown when no routine activity specifies a room. */
+  /** Room shown when no live activity source is attached. */
   startRoom: RoomId;
   /** Ordered room list shown in the navigation controls. */
   rooms: ApartmentRoom[];
@@ -51,6 +51,21 @@ export interface ApartmentProp {
   y: number;
   scale?: number;
   color?: string;
+}
+
+export type ApartmentTypeId = "studio" | "starter-flat" | "one-bedroom" | "high-rise";
+
+/** A physical object placed in one apartment type. It carries no behaviour or routine. */
+export interface ApartmentTypeObject extends ApartmentProp {}
+
+export interface ApartmentTypeDefinition {
+  id: ApartmentTypeId;
+  label: string;
+  name: string;
+  /** Rooms are physical spaces only; the object's room determines where it exists. */
+  rooms: ApartmentRoom[];
+  objects: ApartmentTypeObject[];
+  startRoom: RoomId;
 }
 
 export interface FurnitureConfig extends Record<FurnitureKind, boolean> {
@@ -70,32 +85,23 @@ export interface FurnitureConfig extends Record<FurnitureKind, boolean> {
   mat: boolean;
   car: boolean;
   toolShelf: boolean;
+  phone: boolean;
 }
 
 export type DayPeriod = "dawn" | "morning" | "noon" | "afternoon" | "evening" | "night";
 
-export interface DayActivity {
-  /** 24-hour local start time, inclusive. */
-  startHour: number;
-  /** 24-hour local end time, exclusive; 24 is allowed for the final interval. */
-  endHour: number;
+export interface HomeActivity {
   activity: AvatarActivity;
   caption: string;
   room?: RoomId;
 }
 
-/** Supplies a complete, validated daily routine from an autonomous life engine. */
-export interface DayActivitySource {
-  getDayActivities(now: Date): DayActivity[];
+/** Supplies the single activity the autonomous life engine chose for now. */
+export interface HomeActivitySource {
+  getCurrentActivity(now: Date): HomeActivity;
 }
 
 export type AvatarActivity = "sleeping" | "waking" | "coffee" | "working" | "reading" | "stretching" | "idle" | "walking";
-
-export interface DayCycleConfig {
-  enabled: boolean;
-  timezone: string;
-  activities: DayActivity[];
-}
 
 export interface LightingConfig {
   ambientDayColor: string;
@@ -119,8 +125,8 @@ export interface ApartmentConfig {
   furniture?: Partial<FurnitureConfig>;
   layout?: Partial<ApartmentLayout>;
   props?: ApartmentProp[];
+  timeZone?: string;
   lighting?: Partial<LightingConfig>;
-  dayCycle?: Partial<DayCycleConfig>;
   gateway?: GatewayMount;
   assetCredits?: string;
 }
@@ -133,7 +139,7 @@ export interface ResolvedApartmentConfig {
   layout: ApartmentLayout;
   props: ApartmentProp[];
   lighting: LightingConfig;
-  dayCycle: DayCycleConfig;
+  timeZone: string;
   gateway?: GatewayMount;
   assetCredits?: string;
 }
@@ -174,12 +180,13 @@ export const DEFAULT_FURNITURE: FurnitureConfig = {
   mat: true,
   car: true,
   toolShelf: true,
+  phone: true,
 };
 
 export const DEFAULT_LAYOUT: ApartmentLayout = {
   startRoom: "studio",
   rooms: [
-    { id: "studio", name: "Studio", furniture: ["window", "plant", "desk", "bookshelf"] },
+    { id: "studio", name: "Studio", furniture: ["window", "plant", "desk", "bookshelf", "phone"] },
     { id: "living", name: "Living room", furniture: ["window", "plant", "sofa", "coffeeTable", "floorLamp"] },
     { id: "kitchen", name: "Kitchen", furniture: ["window", "island", "plant"] },
     { id: "bedroom", name: "Bedroom", furniture: ["window", "bed", "bookshelf", "floorLamp"] },
@@ -189,6 +196,90 @@ export const DEFAULT_LAYOUT: ApartmentLayout = {
   ],
 };
 
+/** Four object-only home types. Life tools are derived from these objects by @shubur/life. */
+export const APARTMENT_TYPES: Readonly<Record<ApartmentTypeId, Readonly<ApartmentTypeDefinition>>> = {
+  studio: {
+    id: "studio", label: "Studio", name: "Studio apartment", startRoom: "studio",
+    rooms: [
+      { id: "studio", name: "Main room", furniture: [] },
+      { id: "bathroom", name: "Bathroom", furniture: [] },
+    ],
+    objects: [
+      { id: "bed-area", room: "studio", kind: "bed", label: "Bed area", x: 20, y: 68 },
+      { id: "kitchenette", room: "studio", kind: "island", label: "Kitchenette", x: 68, y: 24 },
+      { id: "sofa", room: "studio", kind: "sofa", label: "Sofa", x: 68, y: 70 },
+      { id: "desk", room: "studio", kind: "desk", label: "Desk", x: 25, y: 24 },
+      { id: "phone", room: "studio", kind: "phone", label: "Phone", x: 48, y: 46 },
+      { id: "shower", room: "bathroom", kind: "shower", label: "Shower", x: 40, y: 30 },
+      { id: "bathroom-sink", room: "bathroom", kind: "sink", label: "Sink", x: 65, y: 60 },
+    ],
+  },
+  "starter-flat": {
+    id: "starter-flat", label: "Starter flat", name: "Starter flat", startRoom: "living",
+    rooms: [
+      { id: "living", name: "Living room", furniture: [] },
+      { id: "kitchen", name: "Kitchenette", furniture: [] },
+      { id: "bathroom", name: "Bathroom", furniture: [] },
+    ],
+    objects: [
+      { id: "sofa", room: "living", kind: "sofa", label: "Sofa", x: 52, y: 62 },
+      { id: "bed-area", room: "living", kind: "bed", label: "Bed area", x: 23, y: 35 },
+      { id: "phone", room: "living", kind: "phone", label: "Phone", x: 71, y: 42 },
+      { id: "kitchen-counter", room: "kitchen", kind: "island", label: "Kitchen counter", x: 48, y: 45 },
+      { id: "kitchen-sink", room: "kitchen", kind: "sink", label: "Sink", x: 70, y: 28 },
+      { id: "shower", room: "bathroom", kind: "shower", label: "Shower", x: 38, y: 36 },
+    ],
+  },
+  "one-bedroom": {
+    id: "one-bedroom", label: "One-bedroom", name: "One-bedroom apartment", startRoom: "living",
+    rooms: [
+      { id: "living", name: "Living room", furniture: [] },
+      { id: "bedroom", name: "Bedroom", furniture: [] },
+      { id: "kitchen", name: "Kitchen", furniture: [] },
+      { id: "bathroom", name: "Bathroom", furniture: [] },
+    ],
+    objects: [
+      { id: "sofa", room: "living", kind: "sofa", label: "Sofa", x: 50, y: 58 },
+      { id: "phone", room: "living", kind: "phone", label: "Phone", x: 72, y: 40 },
+      { id: "bed", room: "bedroom", kind: "bed", label: "Bed", x: 46, y: 52 },
+      { id: "desk", room: "bedroom", kind: "desk", label: "Desk", x: 72, y: 25 },
+      { id: "kitchen-counter", room: "kitchen", kind: "island", label: "Kitchen counter", x: 48, y: 45 },
+      { id: "shower", room: "bathroom", kind: "shower", label: "Shower", x: 38, y: 36 },
+      { id: "bathroom-sink", room: "bathroom", kind: "sink", label: "Sink", x: 70, y: 62 },
+    ],
+  },
+  "high-rise": {
+    id: "high-rise", label: "High-rise", name: "High-rise apartment", startRoom: "living",
+    rooms: [
+      { id: "living", name: "Living room", furniture: [] },
+      { id: "bedroom", name: "Bedroom", furniture: [] },
+      { id: "kitchen", name: "Kitchen", furniture: [] },
+      { id: "bathroom", name: "Bathroom", furniture: [] },
+      { id: "gym", name: "Fitness room", furniture: [] },
+    ],
+    objects: [
+      { id: "sofa", room: "living", kind: "sofa", label: "Sofa", x: 46, y: 58 },
+      { id: "phone", room: "living", kind: "phone", label: "Phone", x: 72, y: 40 },
+      { id: "bed", room: "bedroom", kind: "bed", label: "Bed", x: 46, y: 52 },
+      { id: "desk", room: "bedroom", kind: "desk", label: "Desk", x: 72, y: 25 },
+      { id: "bookshelf", room: "living", kind: "bookshelf", label: "Bookshelf", x: 23, y: 35 },
+      { id: "kitchen-counter", room: "kitchen", kind: "island", label: "Kitchen counter", x: 48, y: 45 },
+      { id: "shower", room: "bathroom", kind: "shower", label: "Shower", x: 38, y: 36 },
+      { id: "weights", room: "gym", kind: "weights", label: "Weights", x: 50, y: 55 },
+      { id: "exercise-mat", room: "gym", kind: "mat", label: "Exercise mat", x: 58, y: 68 },
+    ],
+  },
+};
+
+export function apartmentTypeConfig(id: ApartmentTypeId): ApartmentConfig {
+  const type = APARTMENT_TYPES[id];
+  return {
+    name: type.name,
+    layout: { startRoom: type.startRoom, rooms: type.rooms.map((room) => ({ ...room, furniture: [...room.furniture] })) },
+    props: type.objects.map((object) => ({ ...object })),
+  };
+}
+
 export const DEFAULT_LIGHTING: LightingConfig = {
   ambientDayColor: "#fff3d2",
   ambientNightColor: "#182036",
@@ -196,22 +287,5 @@ export const DEFAULT_LIGHTING: LightingConfig = {
   glowColor: "#ffe7a3",
 };
 
-/** A generic daily routine inspired by the author's portfolio apartment. */
-export const DEFAULT_ACTIVITIES: DayActivity[] = [
-  { startHour: 0, endHour: 6, activity: "sleeping", caption: "Sound asleep", room: "bedroom" },
-  { startHour: 6, endHour: 7, activity: "waking", caption: "Waking up slowly", room: "bedroom" },
-  { startHour: 7, endHour: 9, activity: "coffee", caption: "Making a cup of coffee", room: "kitchen" },
-  { startHour: 9, endHour: 13, activity: "working", caption: "A focused work session", room: "studio" },
-  { startHour: 13, endHour: 14, activity: "idle", caption: "Taking a lunch break", room: "kitchen" },
-  { startHour: 14, endHour: 18, activity: "working", caption: "Back to building things", room: "studio" },
-  { startHour: 18, endHour: 19, activity: "stretching", caption: "Time to stretch", room: "gym" },
-  { startHour: 19, endHour: 21, activity: "reading", caption: "Reading for a while", room: "living" },
-  { startHour: 21, endHour: 23, activity: "idle", caption: "Winding down for the day", room: "living" },
-  { startHour: 23, endHour: 24, activity: "sleeping", caption: "Heading to bed", room: "bedroom" },
-];
-
-export const DEFAULT_DAY_CYCLE: DayCycleConfig = {
-  enabled: true,
-  timezone: "Africa/Lagos",
-  activities: DEFAULT_ACTIVITIES,
-};
+/** Local timezone used for ambient lighting. */
+export const DEFAULT_TIME_ZONE = "Africa/Lagos";

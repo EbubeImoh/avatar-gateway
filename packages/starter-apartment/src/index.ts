@@ -12,10 +12,10 @@
  *   apartment.destroy();
  */
 
-import { APARTMENT_STYLES, buildSceneSvg, currentActivity, localHour, resolveConfig } from "./scene.js";
-import type { ApartmentConfig, DayActivity, DayActivitySource, DayPeriod, RoomId } from "./types.js";
+import { APARTMENT_STYLES, buildSceneSvg, resolveConfig } from "./scene.js";
+import type { ApartmentConfig, HomeActivity, HomeActivitySource, DayPeriod, RoomId } from "./types.js";
 
-export { APARTMENT_STYLES, resolveConfig, buildSceneSvg, currentActivity, dayPeriod, localHour, activityCssClass } from "./scene.js";
+export { APARTMENT_STYLES, resolveConfig, buildSceneSvg, dayPeriod, localHour, activityCssClass } from "./scene.js";
 export {
   DEFAULT_PLACE_NAME,
   DEFAULT_AVATAR_LOOK,
@@ -23,8 +23,9 @@ export {
   DEFAULT_FURNITURE,
   DEFAULT_LAYOUT,
   DEFAULT_LIGHTING,
-  DEFAULT_DAY_CYCLE,
-  DEFAULT_ACTIVITIES,
+  DEFAULT_TIME_ZONE,
+  APARTMENT_TYPES,
+  apartmentTypeConfig,
 } from "./types.js";
 export type {
   ApartmentConfig,
@@ -40,22 +41,24 @@ export type {
   RoomTheme,
   FurnitureConfig,
   LightingConfig,
-  DayCycleConfig,
-  DayActivity,
-  DayActivitySource,
+  HomeActivity,
+  HomeActivitySource,
   DayPeriod,
   GatewayMount,
+  ApartmentTypeId,
+  ApartmentTypeObject,
+  ApartmentTypeDefinition,
 } from "./types.js";
 
 export interface ApartmentMount {
-  /** Stop the day-cycle timer and unmount a connected Avatar widget. */
+  /** Stop scene updates and unmount a connected Avatar widget. */
   destroy(): void;
 }
 
 /** What the apartment is showing after a render. */
 export interface ApartmentRenderState {
   now: Date;
-  activity: DayActivity;
+  activity: HomeActivity;
   period: DayPeriod;
   /** Room currently on screen. */
   room: RoomId;
@@ -64,7 +67,7 @@ export interface ApartmentRenderState {
 }
 
 export interface ApartmentMountOptions {
-  /** Clock for the day cycle. Defaults to the system clock; inject one for previews or time-lapses. */
+  /** Clock used for current activity updates. Defaults to the system clock. */
   clock?: () => Date;
   /** Re-render interval in milliseconds, from 250 ms to 1 hour. Defaults to one minute. */
   refreshMs?: number;
@@ -108,17 +111,6 @@ function resolveMountOptions(options: ApartmentMountOptions): ResolvedMountOptio
   };
 }
 
-/** Fraction of the local day elapsed, from 0 up to but excluding 1. */
-function dayFraction(timezone: string, now: Date): number {
-  const parts = new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "numeric", hourCycle: "h23", timeZone: timezone }).formatToParts(now);
-  const minute = Number(parts.find((part) => part.type === "minute")?.value ?? "0");
-  return (localHour(timezone, now) * 60 + (Number.isFinite(minute) ? minute : 0)) / 1440;
-}
-
-function scheduleCaption(room: RoomId, activityRoom: RoomId, caption: string, roomName: string): string {
-  return room === activityRoom ? caption : `A quiet ${roomName.toLowerCase()}`;
-}
-
 /**
  * Render an accessible multi-room apartment into a selector or element.
  * If `config.gateway` is supplied and the host page exposes `Avatar.mount`,
@@ -127,7 +119,7 @@ function scheduleCaption(room: RoomId, activityRoom: RoomId, caption: string, ro
 export function mount(
   target: string | HTMLElement,
   config: ApartmentConfig = {},
-  activitySource?: DayActivitySource,
+  activitySource?: HomeActivitySource,
   mountOptions: ApartmentMountOptions = {},
 ): ApartmentMount {
   if (typeof target === "string" && typeof document === "undefined") throw new Error("mount() requires a DOM environment");
@@ -150,13 +142,8 @@ export function mount(
   caption.className = "ag-apartment__caption";
   const captionText = container.ownerDocument.createElement("span");
   captionText.setAttribute("aria-live", "polite");
-  const timeText = container.ownerDocument.createElement("time");
-  timeText.className = "ag-apartment__time";
-  caption.append(captionText, timeText);
-  const day = container.ownerDocument.createElement("div");
-  day.className = "ag-apartment__day";
-  day.setAttribute("role", "img");
-  root.append(rooms, stage, caption, day);
+  caption.append(captionText);
+  root.append(rooms, stage, caption);
   container.replaceChildren(root);
 
   let selectedRoom = resolved.layout.startRoom;
@@ -179,12 +166,8 @@ export function mount(
   }
 
   const updateTime = (now: Date): void => {
-    const hour = localHour(resolved.dayCycle.timezone, now);
-    const activities = activitySource
-      ? resolveConfig({ dayCycle: { timezone: resolved.dayCycle.timezone, activities: activitySource.getDayActivities(now) } }).dayCycle.activities
-      : resolved.dayCycle.activities;
-    const activity = currentActivity(activities, resolved.dayCycle.timezone, now);
-    const activityRoom = activity.room && buttonByRoom.has(activity.room) ? activity.room : resolved.layout.startRoom;
+    const activity = activitySource?.getCurrentActivity(now);
+    const activityRoom = activity?.room && buttonByRoom.has(activity.room) ? activity.room : resolved.layout.startRoom;
     if (following) selectedRoom = activityRoom;
     const scene = buildSceneSvg(resolved, now, selectedRoom, activity);
     root.dataset.period = scene.period;
@@ -195,26 +178,11 @@ export function mount(
       stage.innerHTML = scene.svg;
       lastSvg = scene.svg;
     }
-    const nextCaption = scheduleCaption(scene.room.id, activityRoom, scene.activity.caption, scene.room.name);
+    const nextCaption = activity
+      ? scene.room.id === activityRoom ? activity.caption : `A quiet ${scene.room.name.toLowerCase()}`
+      : scene.activity.caption;
     // Rewriting identical text would re-announce it on fast refresh intervals.
     if (captionText.textContent !== nextCaption) captionText.textContent = nextCaption;
-    const time = new Intl.DateTimeFormat("en", { hour: "numeric", minute: "2-digit", timeZone: resolved.dayCycle.timezone }).format(now);
-    timeText.textContent = `${time} · ${resolved.dayCycle.timezone}`;
-    timeText.dateTime = now.toISOString();
-    day.setAttribute("aria-label", `Daily routine. Current local hour ${hour}.`);
-    day.replaceChildren(...activities.map((item) => {
-      const segment = container.ownerDocument.createElement("span");
-      segment.style.width = `${((item.endHour - item.startHour) / 24 * 100).toFixed(3)}%`;
-      segment.style.background = "#597b72";
-      segment.title = `${item.caption} · ${String(item.startHour).padStart(2, "0")}:00–${String(item.endHour).padStart(2, "0")}:00`;
-      segment.setAttribute("aria-hidden", "true");
-      return segment;
-    }));
-    const marker = container.ownerDocument.createElement("i");
-    marker.className = "ag-apartment__now";
-    marker.style.left = `${(dayFraction(resolved.dayCycle.timezone, now) * 100).toFixed(3)}%`;
-    marker.setAttribute("aria-hidden", "true");
-    day.append(marker);
     for (const [id, button] of buttonByRoom) button.setAttribute("aria-pressed", String(id === selectedRoom));
     options.onRender?.({ now, activity: scene.activity, period: scene.period, room: scene.room.id, activityRoom });
   };
@@ -232,7 +200,7 @@ export function mount(
   root.addEventListener("keydown", handleKeyDown);
   render();
 
-  const timer = resolved.dayCycle.enabled || activitySource ? setInterval(() => render(), options.refreshMs) : undefined;
+  const timer = setInterval(() => render(), options.refreshMs);
   let avatar: { destroy(): void } | void;
   if (resolved.gateway) {
     const globalAvatar = (globalThis as typeof globalThis & { Avatar?: AvatarGlobal }).Avatar;

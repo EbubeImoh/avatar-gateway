@@ -2,7 +2,7 @@
 
 Have you ever wondered what your agent would be doing if it had a life of its own?
 
-`@avatar-gateway/starter-apartment` is a generic multi-room apartment for an avatar. It keeps the live-style room scene, brick-inspired avatar, and local day-cycle experience while removing personal names, photos, projects, links, contact details, and private configuration.
+`@avatar-gateway/starter-apartment` is a generic multi-room apartment for an avatar. Rooms and objects describe the physical home; a connected life engine supplies one current activity. The apartment does not define a routine.
 
 The package source is a generic derivative of the author's portfolio apartment experience. Its code and artwork are Apache-2.0; see the package [README](../packages/starter-apartment/README.md) and repository [LICENSE](../LICENSE).
 
@@ -23,14 +23,14 @@ import { ApartmentScene } from "@avatar-gateway/starter-apartment/react";
 export function AvatarHome() {
   return (
     <ApartmentScene
-      config={{ avatar: { name: "My Avatar" }, dayCycle: { timezone: "Africa/Lagos" } }}
+      config={{ avatar: { name: "My Avatar" }, timeZone: "Africa/Lagos" }}
       onAvatarMount={(element) => Avatar.mount(element, { backend: "/avatar-gateway" })}
     />
   );
 }
 ```
 
-The apartment updates its local clock every minute, exposes accessible room buttons, and cleans up the mounted `Avatar` widget when it unmounts.
+The apartment updates its lighting, exposes accessible room buttons, and cleans up the mounted `Avatar` widget when it unmounts.
 
 ## Plain script
 
@@ -54,7 +54,7 @@ The example uses a development/static server that exposes the installed package 
 
 ## Configuration
 
-`ApartmentConfig` is typed and all fields are optional. Defaults use a neutral avatar name and styling, a Lagos timezone, a daily routine, and seven rooms: studio, living room, kitchen, bedroom, bathroom, gym, and garage.
+`ApartmentConfig` is typed and all fields are optional. Defaults use a neutral avatar name and styling, a Lagos timezone, and seven rooms: studio, living room, kitchen, bedroom, bathroom, gym, and garage. No activity is supplied by the apartment itself.
 
 ```ts
 import type { ApartmentConfig } from "@avatar-gateway/starter-apartment";
@@ -81,21 +81,11 @@ const config: ApartmentConfig = {
   ],
   room: { wallColor: "#ddd9cb", accentColor: "#597b72" },
   lighting: { ambientNightColor: "#182036", nightDimOpacity: 0.42, glowColor: "#ffe7a3" },
-  dayCycle: {
-    enabled: true,
-    timezone: "Europe/London",
-    activities: [
-      { startHour: 0, endHour: 8, activity: "sleeping", caption: "Offline", room: "living" },
-      { startHour: 8, endHour: 12, activity: "working", caption: "Morning build", room: "studio" },
-      { startHour: 12, endHour: 13, activity: "idle", caption: "Lunch", room: "living" },
-      { startHour: 13, endHour: 18, activity: "working", caption: "Afternoon build", room: "studio" },
-      { startHour: 18, endHour: 24, activity: "reading", caption: "Evening", room: "living" },
-    ],
-  },
+  timeZone: "Europe/London",
 };
 ```
 
-Rooms must have unique supported IDs. Activity intervals must be contiguous whole hours covering 0–24. A custom room layout may be smaller than the default; default activity rooms fall back to `startRoom`. Explicit activity room references must exist in the supplied layout. Colors are six-digit hex. Prop positions are percentages; labels are rendered as escaped text.
+Rooms must have unique supported IDs. A custom room layout may be smaller than the default. A connected activity source chooses its current room from the rooms it can use. Colors are six-digit hex. Prop positions are percentages; labels are rendered as escaped text.
 
 ### Configuration fields
 
@@ -107,7 +97,7 @@ Rooms must have unique supported IDs. Activity intervals must be contiguous whol
 | `props` | Extra labelled items with room, position, scale, and color |
 | `room` | Shared wall, floor, accent, and window colors |
 | `lighting` | Day/night ambient colors, dim opacity, and glow color |
-| `dayCycle` | Enablement, IANA timezone, and a complete daily activity schedule |
+| `timeZone` | IANA timezone used for local lighting |
 | `gateway` | Plain-DOM `Avatar.mount` selector and same-origin backend path |
 | `assetCredits` | Attribution for custom assets |
 

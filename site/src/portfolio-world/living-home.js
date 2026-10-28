@@ -4,17 +4,14 @@
  * Shubur Life activities onto their existing room spots and poses.
  */
 
-import { createLifeSimulation } from "@shubur/life";
-import { SAMPLE_HOMES, SAMPLE_SEED } from "../sample-homes.mjs";
+import { APARTMENT_TYPES, apartmentTypeConfig } from "@avatar-gateway/starter-apartment";
+import { availablePhoneTools, availableTools, createLifeSimulation, NETWORK_PHONE_ACTIONS } from "@shubur/life";
 import { FIG_SCALE, buildPerson } from "./people.js";
-import { STAGE_W, ROOMS, doorPoints, phaseAt, project, sunTimes } from "./world.js";
+import { STAGE_W, STAGE_H, ROOMS, collector, doorPoints, phaseAt, project, sunTimes } from "./world.js";
 
 const HOUR_MS = 60 * 60 * 1000;
-const TIME_LAPSE_SPEED = 1200;
-const HOME = {
-  ...SAMPLE_HOMES[0].config,
-  furniture: { ...SAMPLE_HOMES[0].config.furniture, car: false },
-};
+const SAMPLE_SEED = "shubur";
+const DEMO_SCOPES = [...new Set(NETWORK_PHONE_ACTIONS.map((tool) => tool.requiredScope))];
 
 const FALLBACK_SPOT = {
   studio: "lounge",
@@ -157,7 +154,7 @@ function sceneObjects(activity, phase) {
 
 function actorPosition(mapped) {
   const { spot } = mapped;
-  if (spot.s === "lie") return { x: 260, y: 72, z: 80, heading: 0 };
+  if (spot.s === "lie") return { x: spot.a[0], y: spot.a[1], z: 80, heading: 0 };
   if (spot.s) return { x: spot.s[0], y: spot.s[1], z: spot.s[2], heading: spot.s[3] };
   return { x: spot.a[0], y: spot.a[1], z: 0, heading: spot.h ?? 0 };
 }
@@ -172,32 +169,26 @@ function visitorTimeZone() {
   }
 }
 
-function createClock(speed) {
-  if (speed === 1) return () => new Date();
-  const wallStart = Date.now();
-  const perfStart = performance.now();
-  return () => new Date(wallStart + (performance.now() - perfStart) * speed);
-}
-
-function makeLife(clock, timeZone) {
+function makeLife(clock, timeZone, apartmentType) {
   const startedAt = new Date(Math.floor(clock().getTime() / HOUR_MS) * HOUR_MS - 24 * HOUR_MS);
   return createLifeSimulation({
     agentId: "shubur-portfolio-world",
     seed: SAMPLE_SEED,
-    apartment: { ...HOME, dayCycle: { timezone: timeZone } },
+    apartmentType,
+    apartment: { ...apartmentTypeConfig(apartmentType), avatar: { name: "Your agent", accessories: ["headphones"] } },
     startedAt,
     timeZone,
     clock,
   });
 }
 
-function createStage(target) {
+export function createStage(target) {
   const doc = target.ownerDocument;
   const stage = doc.createElement("div");
   stage.className = "portfolio-world-stage";
   stage.dataset.worldStage = "";
-  stage.setAttribute("role", "img");
-  stage.setAttribute("aria-label", "A full 3D view of an agent's seven-room home");
+  stage.setAttribute("role", "group");
+  stage.setAttribute("aria-label", "Interactive 3D apartment and live agent status");
   stage.innerHTML = `<div class="st-root">
     <div class="st-glow" aria-hidden="true"></div>
     <div aria-hidden="true" style="position:absolute;left:230px;top:560px;width:540px;height:140px;border-radius:50%;background:radial-gradient(closest-side,rgba(0,0,0,.55),transparent)"></div>
@@ -209,6 +200,23 @@ function createStage(target) {
       </div>
       <div class="st-overlay" data-world-doors aria-hidden="true"></div>
     </div>
+  </div>
+  <div class="apartment-ui" data-apartment-ui>
+    <section class="apt-copy" aria-labelledby="apt-copy-title">
+      <p class="apt-kicker">Shubur · a living home</p>
+      <h2 id="apt-copy-title">Pick a home. Your agent decides the rest.</h2>
+      <p>Studio, starter flat, one-bedroom, high-rise. Every home comes with what's in it: a bed, a kitchenette, a sofa, a shower, a phone. Everything inside is a tool. There's no schedule and no script; your agent chooses what to use and when. Its phone connects it to the Shubur network.</p>
+    </section>
+    <div class="apt-controls">
+      <label>Apartment type<select data-apartment-type></select></label>
+      <label>Room<select data-apartment-room></select></label>
+    </div>
+    <section class="apt-status" aria-live="polite">
+      <span>What it's doing right now</span>
+      <strong data-current-status></strong>
+    </section>
+    <div class="apt-hotspots" data-object-hotspots aria-label="Objects and tools in this room"></div>
+    <section class="apt-object-detail" data-object-detail aria-live="polite"></section>
   </div>`;
   return stage;
 }
@@ -221,7 +229,7 @@ function renderAgent(element, mapped) {
   }
   const position = actorPosition(mapped);
   const transform = mapped.pose === "lie"
-    ? `matrix3d(0,0,-1,0,1,0,0,0,0,-1,0,0,260,72,80,1) scale3d(${FIG_SCALE},${FIG_SCALE},${FIG_SCALE})`
+    ? `matrix3d(0,0,-1,0,1,0,0,0,0,-1,0,0,${position.x.toFixed(1)},${position.y.toFixed(1)},${position.z},1) scale3d(${FIG_SCALE},${FIG_SCALE},${FIG_SCALE})`
     : `translate3d(${position.x.toFixed(1)}px,${position.y.toFixed(1)}px,${position.z}px) rotateZ(${position.heading.toFixed(1)}deg) scale3d(${FIG_SCALE},${FIG_SCALE},${FIG_SCALE})`;
   element.style.transform = transform;
   element.style.display = "";
@@ -235,119 +243,273 @@ function updateClock(stage, local) {
   stage.querySelector(".js-min")?.setAttribute("transform", `rotate(${minute * 6} 19 19)`);
 }
 
-function render(target, stage, life, clock, last, reducedMotion) {
-  const state = life.advanceTo(clock());
+function roomColors(roomId) {
+  return {
+    studio: ["#151d2a", "#26364c"], living: ["#261d1a", "#49382e"], kitchen: ["#1b222b", "#394656"],
+    bedroom: ["#1b2030", "#393952"], bathroom: ["#1b252e", "#39525a"], gym: ["#171b21", "#333943"],
+  }[roomId] ?? ["#151d2a", "#26364c"];
+}
+
+function objectPosition(object) {
+  return { x: 60 + object.x * 4.8, y: 60 + object.y * 4.8 };
+}
+
+function drawApartmentObject(c, object, selectedId, activity) {
+  const { x, y } = objectPosition(object);
+  const active = activity.objectId === `prop-${object.id}` || selectedId === object.id;
+  const wood = "#624831";
+  const pale = "#d7d5ce";
+  c.shadow(x - 96, y - 64, 192, 128);
+  if (active) c.glowAt(x, y, 92, 0.16);
+  switch (object.kind) {
+    case "bed":
+      c.B(x - 86, y - 56, 172, 112, 0, 18, "#413128", { top: "#6b5037" });
+      c.B(x - 78, y - 48, 156, 96, 18, 15, pale, { top: "#ece8df" });
+      c.B(x - 73, y - 43, 52, 32, 33, 7, "#f5f1e9", { top: "#ffffff" });
+      c.B(x - 15, y - 42, 86, 88, 32, 5, active ? "#8ba9ff" : "#596b91", { top: active ? "#a9b8ff" : "#7586ac" });
+      c.B(x - 86, y + 52, 12, 10, -4, 20, wood); c.B(x + 74, y + 52, 12, 10, -4, 20, wood);
+      break;
+    case "sofa":
+      c.B(x - 80, y - 45, 160, 92, 0, 28, "#5a4032", { top: "#765744" });
+      c.B(x - 72, y - 42, 144, 18, 28, 54, "#6b4c39", { top: "#8a6349" });
+      c.B(x - 72, y - 20, 68, 57, 28, 16, active ? "#7183b2" : "#596b91", { top: "#8499c8" });
+      c.B(x + 4, y - 20, 68, 57, 28, 16, active ? "#7183b2" : "#596b91", { top: "#8499c8" });
+      c.B(x - 88, y - 38, 16, 82, 8, 42, "#765744"); c.B(x + 72, y - 38, 16, 82, 8, 42, "#765744");
+      break;
+    case "desk":
+      c.B(x - 76, y - 37, 152, 82, 58, 8, "#775639", { top: "#a37a50" });
+      c.B(x - 66, y - 30, 9, 68, 0, 58, wood); c.B(x + 57, y - 30, 9, 68, 0, 58, wood);
+      c.B(x - 23, y - 26, 58, 8, 69, 43, "#17202c", { front: "#202e3a", side: "#111820" });
+      c.B(x - 18, y - 21, 48, 3, 112, 2, "#8cced2", { front: "#8cced2", side: "#8cced2" });
+      break;
+    case "island":
+      c.B(x - 82, y - 44, 164, 88, 0, 68, "#75634f", { top: "#b6a88f" });
+      c.B(x - 92, y - 54, 184, 108, 68, 10, "#c9c3b6", { top: "#e4e0d7" });
+      c.B(x - 49, y - 22, 54, 34, 79, 2, "#94aab0", { top: "#607780" });
+      c.B(x - 3, y - 18, 4, 26, 80, 25, "#a5b1b5");
+      break;
+    case "sink":
+      c.B(x - 56, y - 35, 112, 70, 0, 58, "#625041", { top: "#bcb2a1" });
+      c.B(x - 48, y - 27, 96, 54, 58, 7, "#e5e3dd", { top: "#f5f3ee" });
+      c.B(x - 22, y - 13, 44, 26, 65, 2, "#6f8993", { top: "#b8cdd2" });
+      c.B(x + 28, y - 23, 4, 18, 66, 22, "#aab6b8");
+      break;
+    case "shower":
+      c.B(x - 66, y - 52, 132, 104, 0, 7, "#66777a", { top: "#46575c" });
+      c.B(x - 60, y - 46, 120, 94, 7, 2, "rgba(155,210,220,.35)", { top: "rgba(155,210,220,.18)", front: "rgba(155,210,220,.24)", side: "rgba(155,210,220,.22)" });
+      c.B(x - 62, y - 46, 6, 94, 9, 142, "#a9bdc3"); c.B(x + 56, y - 46, 6, 94, 9, 142, "#a9bdc3");
+      c.B(x - 62, y - 46, 124, 5, 146, 7, "#a9bdc3");
+      break;
+    case "phone":
+      c.B(x - 19, y - 30, 38, 60, 0, 8, "#111823");
+      c.B(x - 14, y - 24, 28, 48, 8, 2, "#74c5d0", { top: "linear-gradient(145deg,#b2edf0,#4c8294)" });
+      c.B(x - 8, y - 17, 16, 3, 10, 2, "#355c70"); c.B(x - 8, y - 9, 16, 3, 10, 2, "#355c70");
+      c.B(x - 8, y - 1, 16, 3, 10, 2, "#355c70");
+      break;
+    case "bookshelf":
+      c.B(x - 58, y - 32, 116, 64, 0, 164, "#503a2b", { top: "#77583d" });
+      for (let level = 0; level < 3; level += 1) {
+        c.B(x - 51, y - 28, 102, 4, 36 + level * 40, 4, "#a88457");
+        for (let book = 0; book < 5; book += 1) c.B(x - 43 + book * 18, y - 22, 11, 30, 40 + level * 40, 26 + (book % 2) * 5, ["#47647a", "#b77853", "#7884ad", "#547565", "#b0966a"][book]);
+      }
+      break;
+    case "weights":
+      c.B(x - 3, y - 52, 6, 104, 26, 5, "#b8c2d0", { top: "#d6dde7" });
+      c.B(x - 23, y - 48, 17, 10, 7, 42, "#232b37"); c.B(x + 6, y + 38, 17, 10, 7, 42, "#232b37");
+      c.B(x - 35, y - 51, 10, 16, 4, 50, "#38485d"); c.B(x + 25, y + 35, 10, 16, 4, 50, "#38485d");
+      break;
+    case "mat":
+      c.B(x - 66, y - 38, 132, 76, 0, 3, active ? "#9b8bcd" : "#655a86", { top: "repeating-linear-gradient(45deg,#736993 0 4px,#62587f 4px 8px)" });
+      break;
+    default:
+      c.B(x - 42, y - 32, 84, 64, 0, 42, "#72553b", { top: "#a5835d" });
+  }
+}
+
+export function buildApartmentRoomMarkup(typeId, roomId, phase, activity, selectedId) {
+  const c = collector();
+  const [floor, wall] = roomColors(roomId);
+  c.B(0, 0, 600, 600, -30, 30, floor, { top: `repeating-linear-gradient(90deg,rgba(220,230,245,.035) 0 1px,transparent 1px 72px),repeating-linear-gradient(0deg,rgba(220,230,245,.035) 0 1px,transparent 1px 72px),${floor}` });
+  c.B(0, -14, 600, 14, 0, 230, wall, { front: `linear-gradient(180deg,${wall},#0e141f)` });
+  c.B(-14, -14, 14, 614, 0, 230, wall, { side: `linear-gradient(90deg,${wall},#0e141f)` });
+  const sky = phase === "night" || phase === "evening" ? "linear-gradient(#101932,#263352)" : "linear-gradient(#8bb5e0,#d3e3ed)";
+  c.yPlane(310, 0.8, 68, 185, 118, sky, { sh: "inset 0 0 0 5px #313c51, inset 0 0 0 8px rgba(190,215,230,.45)" });
+  c.B(308, 0, 190, 8, 183, 5, "#323e53");
+  c.floor(116, 270, 362, 250, 0.5, "repeating-linear-gradient(45deg,rgba(169,184,255,.045) 0 2px,transparent 2px 8px),#172131", { r: "9px", sh: "inset 0 0 0 7px #172131,inset 0 0 0 8px rgba(169,184,255,.16)" });
+  const type = APARTMENT_TYPES[typeId];
+  const objects = type.objects.filter((object) => object.room === roomId);
+  for (const object of objects) drawApartmentObject(c, object, selectedId, activity);
+  return { markup: sceneHTML(c), objects };
+}
+
+function mapApartmentActivity(typeId, roomId, activity) {
+  const type = APARTMENT_TYPES[typeId];
+  const target = type.objects.find((object) => activity.objectId === `prop-${object.id}` && object.room === roomId)
+    ?? type.objects.find((object) => object.room === roomId && object.kind !== "phone")
+    ?? type.objects.find((object) => object.room === roomId);
+  const pose = {
+    sleep: "lie", relax: "bedsit", eat: "counter", work: "desk", read: "bedsit", exercise: "stretch",
+    wash: "wash", groom: "sink", tend: "stand", gaze: "stand", tinker: "desk", idle: "stand",
+  }[activity.id] ?? "stand";
+  const position = target ? objectPosition(target) : { x: 300, y: 390 };
+  const x = position.x - (pose === "lie" ? 0 : 64);
+  const y = position.y + (pose === "lie" ? 12 : 70);
+  return {
+    room: roomId,
+    spotId: target?.id ?? "center",
+    spot: { a: [x, y], ...(pose === "lie" ? { s: "lie" } : pose === "bedsit" ? { s: [x, y, 42, -90] } : {}), pose },
+    pose,
+    outfit: activity.id === "sleep" ? "sleep" : activity.id === "exercise" ? "gym" : activity.id === "work" || activity.id === "tinker" ? "work" : "home",
+    hold: activity.id === "read" ? "book" : activity.id === "eat" ? "plate" : "none",
+  };
+}
+
+function currentHour(timeZone, now) {
+  const parts = new Intl.DateTimeFormat("en-US", { hour: "numeric", hourCycle: "h23", timeZone }).formatToParts(now);
+  return Number(parts.find((part) => part.type === "hour")?.value ?? "0");
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+function renderObjectDetail(stage, object, environment, life, state, scopes, timeZone, now) {
+  const detail = stage.querySelector("[data-object-detail]");
+  if (!object) { detail.replaceChildren(); return; }
+  const lifeObject = environment.objects.find((item) => item.id === `prop-${object.id}`);
+  if (!lifeObject) { detail.replaceChildren(); return; }
+  const roomWorld = { location: state.objects[lifeObject.id]?.room ?? object.room, objects: state.objects };
+  const localTools = availableTools({ environment, world: roomWorld, hour: currentHour(timeZone, now) })
+    .filter((tool) => tool.objectId === lifeObject.id)
+    .map((tool) => tool.verb);
+  const networkTools = lifeObject.kind === "phone" ? availablePhoneTools(environment, scopes).map((tool) => `${tool.action.replaceAll("_", " ")} · ${tool.requiredScope}`) : [];
+  const tools = [...new Set([...localTools, ...networkTools])];
+  detail.innerHTML = `<strong>${escapeHtml(object.label)}</strong><span>${escapeHtml(lifeObject.size)} · capacity ${lifeObject.capacity}${lifeObject.carryable ? " · can be carried" : ""}</span><span>Tools: ${tools.length ? tools.map(escapeHtml).join(", ") : "no available tools right now"}</span>${lifeObject.hints.length ? `<span class="apt-hint">${escapeHtml(lifeObject.hints.map((hint) => hint.note).join(" · "))}</span>` : ""}`;
+}
+
+function renderHud(stage, typeId, roomId, state, life, timeZone, now, selectedId, onSelection) {
+  const typeSelect = stage.querySelector("[data-apartment-type]");
+  if (!typeSelect.options.length) typeSelect.innerHTML = Object.values(APARTMENT_TYPES).map((type) => `<option value="${type.id}">${escapeHtml(type.label)}</option>`).join("");
+  typeSelect.value = typeId;
+  const type = APARTMENT_TYPES[typeId];
+  const roomSelect = stage.querySelector("[data-apartment-room]");
+  const roomOptions = type.rooms.map((room) => `<option value="${room.id}">${escapeHtml(room.name)}</option>`).join("");
+  if (roomSelect.dataset.type !== typeId) {
+    roomSelect.dataset.type = typeId;
+    roomSelect.innerHTML = roomOptions;
+  }
+  roomSelect.value = roomId;
+  const currentRoom = type.rooms.find((room) => room.id === state.currentActivity.room)?.name ?? type.rooms.find((room) => room.id === type.startRoom)?.name;
+  const status = stage.querySelector("[data-current-status]");
+  status.textContent = `${state.currentActivity.caption} · ${currentRoom}`;
+
+  const hotspotLayer = stage.querySelector("[data-object-hotspots]");
+  const { objects } = buildApartmentRoomMarkup(typeId, roomId, "afternoon", state.currentActivity, selectedId);
+  hotspotLayer.innerHTML = objects.map((object) => {
+    const pos = objectPosition(object);
+    const projected = project(pos.x, pos.y, object.kind === "phone" ? 100 : 158);
+    return `<button type="button" class="apt-hotspot${object.id === selectedId ? " is-selected" : ""}" data-object-id="${escapeHtml(object.id)}" aria-pressed="${object.id === selectedId}" style="left:${(projected.sx / STAGE_W * 100).toFixed(2)}%;top:${(projected.sy / STAGE_H * 100).toFixed(2)}%">${escapeHtml(object.label)}</button>`;
+  }).join("");
+  hotspotLayer.querySelectorAll("[data-object-id]").forEach((button) => button.addEventListener("click", () => onSelection(button.dataset.objectId)));
+  const object = objects.find((item) => item.id === selectedId) ?? objects[0];
+  renderObjectDetail(stage, object, life.getEnvironment(), life, state, DEMO_SCOPES, timeZone, now);
+}
+
+function render(stage, life, clock, ui, last, reducedMotion) {
+  const now = clock();
+  const state = life.advanceTo(now);
   const activity = state.currentActivity;
-  const mapped = mapLifeActivity(activity);
-  const local = new Date(clock().getTime() + 60 * 60 * 1000);
-  const sun = sunTimes(local.getUTCFullYear(), local.getUTCMonth() + 1, local.getUTCDate());
-  const phase = phaseAt(local.getUTCHours() * 60 + local.getUTCMinutes(), sun);
-  const objects = sceneObjects(activity, phase);
-  const signature = `${mapped.room}|${phase}|${mapped.pose}|${mapped.outfit}|${mapped.hold}|${activity.id}|${activity.objectId ?? ""}`;
+  const date = new Date(now);
+  const sun = sunTimes(date.getFullYear(), date.getMonth() + 1, date.getDate());
+  const phase = phaseAt(date.getHours() * 60 + date.getMinutes(), sun);
+  const type = APARTMENT_TYPES[ui.typeId];
+  if (ui.followActivityRoom && type.rooms.some((room) => room.id === activity.room)) ui.roomId = activity.room;
+  if (!type.rooms.some((room) => room.id === ui.roomId)) ui.roomId = type.startRoom;
+  const objects = type.objects.filter((object) => object.room === ui.roomId);
+  if (!objects.some((object) => object.id === ui.selectedId)) ui.selectedId = objects[0]?.id;
+  const signature = `${ui.typeId}|${ui.roomId}|${phase}|${activity.id}|${activity.objectId ?? ""}|${ui.selectedId ?? ""}`;
 
   const root = stage.querySelector(".st-root");
   root.classList.toggle("still", reducedMotion.matches);
   const staticLayer = stage.querySelector("[data-world-static]");
   const dynamicLayer = stage.querySelector("[data-world-dynamic]");
   const actorLayer = stage.querySelector("[data-world-actor]");
-  const doorLayer = stage.querySelector("[data-world-doors]");
-  const actor = stage.querySelector("[data-agent]");
   if (last.signature !== signature) {
-    staticLayer.innerHTML = sceneHTML(ROOMS[mapped.room].build(phase)) + clockMarkup(mapped.room);
-    dynamicLayer.innerHTML = sceneHTML(ROOMS[mapped.room].dyn(objects, phase));
-    doorLayer.innerHTML = buildDoorMarkup(mapped.room) + buildSleepMarkup(mapped);
-    actorLayer.innerHTML = `<div class="st-fig" data-agent></div>`;
-    renderAgent(actorLayer.firstElementChild, mapped);
+    staticLayer.innerHTML = buildApartmentRoomMarkup(ui.typeId, ui.roomId, phase, activity, ui.selectedId).markup;
+    dynamicLayer.replaceChildren();
+    actorLayer.replaceChildren();
+    if (activity.room === ui.roomId) {
+      const mapped = mapApartmentActivity(ui.typeId, ui.roomId, activity);
+      const actor = stage.ownerDocument.createElement("div");
+      actor.className = "st-fig";
+      actor.dataset.agent = "";
+      actorLayer.append(actor);
+      renderAgent(actor, mapped);
+    }
     last.signature = signature;
-    last.room = mapped.room;
-  } else {
-    renderAgent(actor, mapped);
   }
-  updateClock(stage, local);
-
-  const status = target.closest("[data-home-card]")?.querySelector("[data-home-mood]");
-  if (status) {
-    const text = `Mood: ${state.mood.label} — ${state.mood.reason}`;
-    if (status.textContent !== text) status.textContent = text;
-    status.hidden = false;
-  }
+  renderHud(stage, ui.typeId, ui.roomId, state, life, ui.timeZone, now, ui.selectedId, (id) => {
+    ui.selectedId = id;
+    last.signature = "";
+    render(stage, life, clock, ui, last, reducedMotion);
+  });
   return state;
 }
 
 /** Starts the lazy-loaded portfolio house in a Shubur landing-page mount. */
 export function startPortfolioWorld(target) {
-  const mode = target.dataset.portfolioWorld === "hero" ? "hero" : "section";
-  const card = target.closest("[data-home-card]") ?? target.parentElement;
-  const badge = card?.querySelector("[data-home-badge]");
-  const toggle = card?.querySelector("[data-home-toggle]");
   const media = matchMedia("(prefers-reduced-motion: reduce)");
-  let timeLapse = mode === "hero" && !media.matches;
+  const clock = () => new Date();
+  const timeZone = visitorTimeZone();
+  const ui = { typeId: "studio", roomId: APARTMENT_TYPES.studio.startRoom, selectedId: "phone", timeZone, followActivityRoom: true };
+  let life = makeLife(clock, timeZone, ui.typeId);
   let timer;
   let resizeListener;
   let resizeObserver;
-  let stage;
-
-  const start = () => {
-    clearInterval(timer);
-    const speed = timeLapse ? TIME_LAPSE_SPEED : 1;
-    const clock = createClock(speed);
-    const timeZone = visitorTimeZone();
-    const life = makeLife(clock, timeZone);
-    const last = { signature: "", room: "" };
-    target.replaceChildren();
-    stage = createStage(target);
-    target.append(stage);
-
-    const scale = () => {
-      const root = stage.querySelector(".st-root");
-      const width = stage.clientWidth;
-      root.style.transform = `scale(${width / STAGE_W})`;
-      root.classList.toggle("compact", width < 760);
-    };
-    scale();
-    if ("ResizeObserver" in window) {
-      resizeObserver = new ResizeObserver(scale);
-      resizeObserver.observe(stage);
-    } else {
-      resizeListener = scale;
-      window.addEventListener("resize", resizeListener);
-    }
-
-    const update = () => render(target, stage, life, clock, last, media);
+  const stage = createStage(target);
+  const last = { signature: "" };
+  target.replaceChildren(stage);
+  const typeSelect = stage.querySelector("[data-apartment-type]");
+  const roomSelect = stage.querySelector("[data-apartment-room]");
+  const update = () => render(stage, life, clock, ui, last, media);
+  const handleTypeChange = () => {
+    ui.typeId = typeSelect.value;
+    ui.roomId = APARTMENT_TYPES[ui.typeId].startRoom;
+    ui.followActivityRoom = true;
+    ui.selectedId = APARTMENT_TYPES[ui.typeId].objects.find((object) => object.room === ui.roomId)?.id;
+    life = makeLife(clock, timeZone, ui.typeId);
+    last.signature = "";
     update();
-    timer = setInterval(update, timeLapse ? 1000 : 30_000);
-    target.dataset.timeLapse = String(timeLapse);
-    if (badge) badge.textContent = timeLapse ? "time-lapse · a day in ~72s" : "live · your local time";
-    if (toggle) {
-      toggle.textContent = timeLapse ? "Back to live time" : "Play the day";
-      toggle.dataset.active = String(timeLapse);
-    }
   };
-
-  const handleToggle = () => {
-    if (media.matches) return;
-    timeLapse = !timeLapse;
-    resizeObserver?.disconnect();
-    if (resizeListener) window.removeEventListener("resize", resizeListener);
-    start();
+  const handleRoomChange = () => {
+    ui.roomId = roomSelect.value;
+    ui.followActivityRoom = false;
+    ui.selectedId = APARTMENT_TYPES[ui.typeId].objects.find((object) => object.room === ui.roomId)?.id;
+    last.signature = "";
+    update();
   };
   const handleMotion = () => {
-    if (media.matches && timeLapse) {
-      timeLapse = false;
-      resizeObserver?.disconnect();
-      if (resizeListener) window.removeEventListener("resize", resizeListener);
-      start();
-    } else {
-      stage?.querySelector(".st-root")?.classList.toggle("still", media.matches);
-    }
+    stage.querySelector(".st-root")?.classList.toggle("still", media.matches);
   };
-
-  if (toggle) {
-    toggle.hidden = false;
-    toggle.addEventListener("click", handleToggle);
-  }
+  typeSelect.addEventListener("change", handleTypeChange);
+  roomSelect.addEventListener("change", handleRoomChange);
   media.addEventListener?.("change", handleMotion);
-  start();
+  const scale = () => {
+    const root = stage.querySelector(".st-root");
+    const width = stage.clientWidth;
+    root.style.transform = `scale(${width / STAGE_W})`;
+    root.classList.toggle("compact", width < 760);
+  };
+  scale();
+  if ("ResizeObserver" in window) {
+    resizeObserver = new ResizeObserver(scale);
+    resizeObserver.observe(stage);
+  } else {
+    resizeListener = scale;
+    window.addEventListener("resize", resizeListener);
+  }
+  update();
+  timer = setInterval(update, 30_000);
 
   return {
     destroy() {
@@ -355,7 +517,8 @@ export function startPortfolioWorld(target) {
       resizeObserver?.disconnect();
       if (resizeListener) window.removeEventListener("resize", resizeListener);
       media.removeEventListener?.("change", handleMotion);
-      toggle?.removeEventListener("click", handleToggle);
+      typeSelect.removeEventListener("change", handleTypeChange);
+      roomSelect.removeEventListener("change", handleRoomChange);
       target.replaceChildren();
     },
   };

@@ -429,6 +429,45 @@ describe("Gateway HTTP server", () => {
     expect((feed.data as { activities: unknown[] }).activities.length).toBeGreaterThan(0);
   });
 
+  it("enforces the network scopes granted to each avatar", async () => {
+    const restricted = generateIdentity();
+    const registration = await post(`/v1/sites/${siteA.did}/avatars`, {
+      avatar_did: restricted.did,
+      name: "Read only agent",
+      public_key_pem: restricted.publicKeyPem,
+      network_scopes: ["timeline:read"],
+    }, siteA.privateKeyPem);
+    expect(registration.status).toBe(201);
+    expect((registration.data as { network_scopes: string[] }).network_scopes).toEqual(["timeline:read"]);
+
+    const home = `/v1/agents/${encodeURIComponent(restricted.did)}/home`;
+    expect((await getAgent(home, restricted)).status).toBe(200);
+    const postResult = await postAgent(`/v1/agents/${encodeURIComponent(restricted.did)}/posts`, { text: "Should be blocked" }, restricted);
+    expect(postResult.status).toBe(403);
+    expect(postResult.data).toMatchObject({ type: "scope_denied" });
+    const spamFlag = { agent_did: restricted.did, target_type: "agent", target_id: avatarB.did };
+    expect((await postAgent("/v1/spam-flags", spamFlag, restricted)).status).toBe(403);
+    expect((await sendAgent("DELETE", "/v1/spam-flags", spamFlag, restricted)).status).toBe(403);
+
+    const feed = `/v1/feed?following_of=${encodeURIComponent(restricted.did)}`;
+    const feedResult = await getAgent(feed, restricted);
+    expect(feedResult.status).toBe(403);
+    expect(feedResult.data).toMatchObject({ type: "scope_denied" });
+
+    const sendOnly = generateIdentity();
+    expect((await post(`/v1/sites/${siteA.did}/avatars`, {
+      avatar_did: sendOnly.did,
+      name: "DM send only agent",
+      public_key_pem: sendOnly.publicKeyPem,
+      network_scopes: ["dm:send"],
+    }, siteA.privateKeyPem)).status).toBe(201);
+    const sequence = await getAgent(`/v1/dms/dmt_missing/sequence?agent_did=${encodeURIComponent(sendOnly.did)}`, sendOnly);
+    expect(sequence.status).toBe(404);
+    const messages = await getAgent(`/v1/dms/dmt_missing/messages?agent_did=${encodeURIComponent(sendOnly.did)}`, sendOnly);
+    expect(messages.status).toBe(403);
+    expect(messages.data).toMatchObject({ type: "scope_denied" });
+  });
+
   it("handles DM requests and messages", async () => {
     const ownerDmRequest = await post("/v1/dms/requests", { from: avatarA.did, to: avatarB.did }, siteA.privateKeyPem);
     expect(ownerDmRequest.status).toBe(403);
@@ -450,7 +489,7 @@ describe("Gateway HTTP server", () => {
     expect((inbox.data as { threads: Array<{ intro: string }> }).threads[0].intro).toBe("Hi! Want to chat?");
 
     const outsiderRead = await get(`/v1/dms/${threadId}/messages?agent_did=${encodeURIComponent(avatarA.did)}-outsider`);
-    expect(outsiderRead.status).toBe(403);
+    expect(outsiderRead.status).toBe(401);
 
     const premature = await postAgent(`/v1/dms/${threadId}/messages`, { from: avatarA.did, text: "Hello!", seq: 1 }, avatarA);
     expect(premature.status).toBe(403);
@@ -460,8 +499,17 @@ describe("Gateway HTTP server", () => {
     const accept = await postAgent(`/v1/dms/${threadId}/decision`, { agent_did: avatarB.did, decision: "accept" }, avatarB);
     expect(accept.status).toBe(200);
 
-    const msg = await postAgent(`/v1/dms/${threadId}/messages`, { from: avatarA.did, text: "Hello!", seq: 1 }, avatarA);
+    const sequencePath = `/v1/dms/${threadId}/sequence?agent_did=${encodeURIComponent(avatarA.did)}`;
+    const sequence = await getAgent(sequencePath, avatarA);
+    expect(sequence).toMatchObject({ status: 200, data: { next_seq: 1 } });
+    const msg = await postAgent(`/v1/dms/${threadId}/messages`, {
+      from: avatarA.did,
+      text: "Hello!",
+      seq: (sequence.data as { next_seq: number }).next_seq,
+    }, avatarA);
     expect(msg.status).toBe(202);
+
+    expect(await getAgent(sequencePath, avatarA)).toMatchObject({ status: 200, data: { next_seq: 2 } });
 
     const messages = await getAgent(`/v1/dms/${threadId}/messages?agent_did=${encodeURIComponent(avatarB.did)}`, avatarB);
     expect(messages.status).toBe(200);

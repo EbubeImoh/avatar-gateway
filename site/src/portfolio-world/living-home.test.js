@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import { JSDOM } from "jsdom";
+import { APARTMENT_TYPES } from "@avatar-gateway/starter-apartment";
 import { ROOMS, ROOM_IDS } from "./world.js";
-import { buildAgentMarkup, buildDoorMarkup, buildRoomMarkup, buildSleepMarkup, mapLifeActivity } from "./living-home.js";
+import { buildAgentMarkup, buildApartmentRoomMarkup, buildDoorMarkup, buildRoomMarkup, buildSleepMarkup, createStage, mapLifeActivity } from "./living-home.js";
 
 const houseCSS = readFileSync(new URL("./house.css", import.meta.url), "utf8");
+const siteHTML = readFileSync(new URL("../../index.html", import.meta.url), "utf8");
+const siteBundle = readFileSync(new URL("../../assets/portfolio-world.js", import.meta.url), "utf8");
 
 describe("portfolio CSS-3D house port", () => {
   it("maps Shubur Life activities onto the portfolio's existing room spots and poses", () => {
@@ -100,5 +104,45 @@ describe("portfolio CSS-3D house port", () => {
     expect(houseCSS).toContain("prefers-reduced-motion:reduce");
     expect(houseCSS).toContain(".st-door");
     expect(houseCSS).not.toMatch(/\.st-npc|\.st-lab|\.st-clock|\.st-who|\.st-chip|\.st-wag|\.st-paw|\.st-munch|\.st-breathe/);
+  });
+
+  it("renders each apartment type from only its own objects", () => {
+    for (const [typeId, type] of Object.entries(APARTMENT_TYPES)) {
+      for (const room of type.rooms) {
+        const rendered = buildApartmentRoomMarkup(typeId, room.id, "afternoon", { id: "idle", room: room.id, objectId: "" }, "");
+        expect(rendered.objects).toEqual(type.objects.filter((object) => object.room === room.id));
+      }
+    }
+    const studio = APARTMENT_TYPES.studio;
+    expect(studio.rooms.some((room) => room.id === "bedroom")).toBe(false);
+    expect(studio.objects.find((object) => object.id === "bed-area")?.room).toBe("studio");
+    expect(buildApartmentRoomMarkup("studio", "studio", "afternoon", { id: "idle", room: "studio" }, "").markup)
+      .not.toContain("bedroom");
+    expect(buildApartmentRoomMarkup("high-rise", "living", "afternoon", { id: "idle", room: "living" }, "").markup)
+      .not.toBe(buildApartmentRoomMarkup("studio", "studio", "afternoon", { id: "idle", room: "studio" }, "").markup);
+  });
+
+  it("keeps copy, type picker, current status, room picker, and object tools on the 3D apartment", () => {
+    const dom = new JSDOM("<!doctype html><body><div id=target></div></body>");
+    const target = dom.window.document.querySelector("#target");
+    const stage = createStage(target);
+    expect(stage.querySelector(".st-root .st-view")).not.toBeNull();
+    expect(stage.querySelector(".apartment-ui")).not.toBeNull();
+    expect(stage.querySelector("[data-apartment-type]")).not.toBeNull();
+    expect(stage.querySelector("[data-apartment-room]")).not.toBeNull();
+    expect(stage.querySelector("[data-current-status]")).not.toBeNull();
+    expect(stage.querySelector("[data-object-hotspots]")).not.toBeNull();
+    expect(stage.querySelector("[data-object-detail]")).not.toBeNull();
+    expect(stage.querySelector("#apt-copy-title")?.textContent).toBe("Pick a home. Your agent decides the rest.");
+    dom.window.close();
+  });
+
+  it("ships no timetable, schedule ranges, or generated day timeline in site HTML or JavaScript", () => {
+    const sources = [siteHTML, readFileSync(new URL("./living-home.js", import.meta.url), "utf8"), siteBundle];
+    for (const source of sources) {
+      expect(source).not.toMatch(/\b\d{1,2}(?::\d{2})?\s*(?:AM|PM)\s*[–-]\s*\d{1,2}(?::\d{2})?\s*(?:AM|PM)\b/i);
+      expect(source).not.toMatch(/(?:getDayActivities|ag-apartment__day|ag-apartment__now|data-time-lapse|day-in-the-life|time-lapse)/i);
+      expect(source).not.toMatch(/\b(?:startHour|endHour)\b/);
+    }
   });
 });

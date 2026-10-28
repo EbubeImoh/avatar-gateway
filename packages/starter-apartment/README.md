@@ -2,7 +2,7 @@
 
 Have you ever wondered what your agent would be doing if it had a life of its own?
 
-The Starter Apartment gives an avatar a generic, multi-room home with a daily routine. It includes a studio, living room, kitchen, bedroom, bathroom, gym, and garage. Choose rooms, furniture, props, colors, lighting, timezone, and activities through a typed `ApartmentConfig`.
+The Starter Apartment gives an avatar a generic, multi-room home. Rooms and objects define the physical environment; a connected life engine chooses what the agent does. Choose rooms, furniture, props, colors, lighting, and timezone through a typed `ApartmentConfig`.
 
 ## Install
 
@@ -22,7 +22,7 @@ export function AvatarHome() {
     <ApartmentScene
       config={{
         avatar: { name: "My Avatar", outfitColor: "#4968b8" },
-        dayCycle: { timezone: "America/New_York" },
+        timeZone: "America/New_York",
       }}
     />
   );
@@ -60,7 +60,7 @@ The component calls the returned widget's `destroy()` method when it unmounts.
 
   const apartment = mount("#my-apartment", {
     avatar: { name: "My Avatar" },
-    dayCycle: { timezone: "America/New_York" },
+    timeZone: "America/New_York",
     gateway: { selector: "#avatar-widget", backendUrl: "/avatar-gateway" },
   });
 
@@ -70,13 +70,13 @@ The component calls the returned widget's `destroy()` method when it unmounts.
 
 Serve the page from a development or static server that exposes `node_modules`; the module imports above use those paths for a no-bundler example. Adding `gateway: { selector, backendUrl }` mounts the SDK widget into the selected element and tears it down with `destroy()`.
 
-`mount()` also takes an optional activity source, such as a `@shubur/life` simulation, and display options:
+`mount()` also takes an optional current activity source, such as a `@shubur/life` simulation, and display options:
 
 ```js
-const apartment = mount("#my-apartment", { dayCycle: { timezone: "UTC" } }, lifeSimulation, {
-  followAvatar: true, // show the avatar's room until the visitor picks one
+const apartment = mount("#my-apartment", { timeZone: "UTC" }, lifeSimulation, {
+  followAvatar: true, // show the current room until the visitor picks one
   refreshMs: 1000, // re-render interval, 250 ms to 1 hour (default one minute)
-  clock: () => new Date(), // inject a clock for previews or time-lapses
+  clock: () => new Date(), // inject a clock for previews
   onRender: ({ activity, room, period }) => console.log(activity.caption, room, period),
 });
 ```
@@ -99,21 +99,12 @@ const config: ApartmentConfig = {
     { id: "studio-plant", room: "studio", kind: "plant", label: "Desk plant", x: 70, y: 45, color: "#597b72" },
   ],
   room: { accentColor: "#597b72" },
+  timeZone: "Europe/London",
   lighting: { ambientNightColor: "#202a45", nightDimOpacity: 0.38 },
-  dayCycle: {
-    timezone: "Europe/London",
-    activities: [
-      { startHour: 0, endHour: 8, activity: "sleeping", caption: "Offline", room: "bedroom" },
-      { startHour: 8, endHour: 12, activity: "working", caption: "Morning build", room: "studio" },
-      { startHour: 12, endHour: 13, activity: "idle", caption: "Lunch", room: "kitchen" },
-      { startHour: 13, endHour: 18, activity: "working", caption: "Afternoon build", room: "studio" },
-      { startHour: 18, endHour: 24, activity: "reading", caption: "Evening", room: "living" },
-    ],
-  },
 };
 ```
 
-Activity intervals must be whole hours, contiguous, and cover 0–24. Colors use six-digit hex values. Names and captions are rendered as text, and configuration is validated before SVG generation.
+Colors use six-digit hex values. Names and captions are rendered as text, and configuration is validated before SVG generation.
 
 ## Portfolio source and license
 

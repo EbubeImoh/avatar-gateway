@@ -4,7 +4,8 @@
  * chooser decides what to do. Nothing here prescribes a routine.
  */
 
-import type { ApartmentConfig, DayActivity, DayActivitySource } from "@avatar-gateway/starter-apartment";
+import { apartmentTypeConfig } from "@avatar-gateway/starter-apartment";
+import type { ApartmentConfig, ApartmentTypeId, HomeActivitySource } from "@avatar-gateway/starter-apartment";
 import { UtilityChooser } from "./chooser.js";
 import type { LifeChoiceContext, LifeChooser } from "./chooser.js";
 import { buildEnvironment, initialObjectStates } from "./environment.js";
@@ -14,12 +15,16 @@ import { applyToolToWorld, availableTools } from "./tools.js";
 import type { LifeTool, WorldState } from "./tools.js";
 import { NEED_NAMES, SKILL_NAMES, TRAIT_NAMES, clampLevel } from "./types.js";
 import type { AgentLifeState, LifeActivity, LifeMood, NeedState, SkillState, TraitState } from "./types.js";
+import { availablePhoneTools, requirePhoneTool, NETWORK_PHONE_ACTIONS } from "./phone.js";
+import type { NetworkPhoneAction, NetworkPhoneTool, NetworkScope } from "./phone.js";
 
 export { createSeededRandom } from "./random.js";
 export { OBJECT_CATALOG, buildEnvironment, initialObjectStates } from "./environment.js";
 export type { LifeEnvironment, LifeObject, LifeObjectState, LifeRoom, ObjectFeature, ObjectPhysics, ObjectSize, SoftHint } from "./environment.js";
 export { applyToolToWorld, availableTools, isDark } from "./tools.js";
 export type { LifeTool, ToolContext, ToolParams, ToolVerb, WorldState } from "./tools.js";
+export { availablePhoneTools, requirePhoneTool, NETWORK_PHONE_ACTIONS };
+export type { NetworkPhoneAction, NetworkPhoneTool, NetworkScope };
 export { UtilityChooser, urgentNeeds, utilityOf } from "./chooser.js";
 export type { LifeChoice, LifeChoiceContext, LifeChooser } from "./chooser.js";
 export type {
@@ -34,6 +39,8 @@ export interface LifeSimulationOptions {
   seed: string | number;
   /** The owner's home. Defaults to the Starter Apartment. Rooms and objects come only from here. */
   apartment?: ApartmentConfig;
+  /** Choose one of the built-in object-only home layouts. */
+  apartmentType?: ApartmentTypeId;
   /** Decides which available tool to use. Defaults to the seeded UtilityChooser. */
   chooser?: LifeChooser;
   /** Other occupants per object id, for shared homes. A full object cannot be used. */
@@ -147,11 +154,6 @@ function localHour(now: Date, timeZone: string): number {
   return Number.isInteger(hour) && hour >= 0 && hour <= 23 ? hour : 0;
 }
 
-function localDateKey(now: Date, timeZone: string): string {
-  const parts = localParts(now, timeZone);
-  return `${parts.year}-${parts.month}-${parts.day}`;
-}
-
 function deriveMood(state: AgentLifeState): LifeMood {
   if (state.needs.energy >= 76) return { label: "tired", reason: "rest is the most pressing need" };
   if (state.needs.hunger >= 76) return { label: "hungry", reason: "a meal would help" };
@@ -179,10 +181,6 @@ function cloneState(state: AgentLifeState): AgentLifeState {
     mood: { ...state.mood },
     currentActivity: cloneActivity(state.currentActivity),
   };
-}
-
-function activitySlot(activity: DayActivity, startHour: number, endHour: number): DayActivity {
-  return { ...activity, startHour, endHour };
 }
 
 /** Body physics for one hour: needs rise over time, faster awake, and sleep pressure builds at night. */
@@ -267,8 +265,6 @@ function decide(state: AgentLifeState, now: Date, engine: Engine, random: Seeded
       activity: tool.activity,
       caption: tool.caption,
       room: tool.room,
-      startHour: hour,
-      endHour: Math.min(24, hour + 1),
       startedAt: now.toISOString(),
       utility: Math.round(score * 1_000) / 1_000,
     };
@@ -295,20 +291,31 @@ function transition(state: AgentLifeState, now: Date, engine: Engine, random: Se
  * Stateful, seeded life simulation in the owner's home. Travel, chat, and
  * social activities are intentionally left for later layers.
  */
-export class LifeSimulation implements DayActivitySource {
+export class LifeSimulation implements HomeActivitySource {
   private readonly clock: () => Date;
   private readonly random: SeededRandom;
   private readonly engine: Engine;
   private state: AgentLifeState;
-  private dayKey: string;
-  private readonly dayActivities = new Map<number, DayActivity>();
-  private forecast?: { dateKey: string; activities: Map<number, DayActivity> };
 
   constructor(options: LifeSimulationOptions) {
     if (!options.agentId.trim() || options.agentId.length > 255) throw new Error("agentId must contain 1–255 characters.");
     if (options.chooser !== undefined && typeof options.chooser?.choose !== "function") throw new Error("chooser must provide a choose() function.");
     this.clock = options.clock ?? (() => new Date());
-    const environment = buildEnvironment(options.apartment);
+    const typedApartment = options.apartmentType ? apartmentTypeConfig(options.apartmentType) : undefined;
+    const apartment = typedApartment
+      ? {
+          ...typedApartment,
+          ...options.apartment,
+          layout: options.apartment?.layout
+            ? {
+                ...typedApartment.layout,
+                ...options.apartment.layout,
+                rooms: options.apartment.layout.rooms ?? typedApartment.layout?.rooms,
+              }
+            : typedApartment.layout,
+        }
+      : options.apartment;
+    const environment = buildEnvironment(apartment);
     this.engine = {
       environment,
       chooser: options.chooser ?? new UtilityChooser(),
@@ -332,7 +339,7 @@ export class LifeSimulation implements DayActivitySource {
       currentActivity: {
         id: "idle", toolId: "", params: {}, hinted: false, effects: {}, preparations: [], plannedHours: 0, elapsedHours: 0,
         activity: "idle", caption: "Arriving home", room: environment.startRoom,
-        startHour: 0, endHour: 1, startedAt: startedAt.toISOString(), utility: 0,
+        startedAt: startedAt.toISOString(), utility: 0,
       },
       startedAt: startedAt.toISOString(),
       lastUpdatedAt: startedAt.toISOString(),
@@ -341,8 +348,6 @@ export class LifeSimulation implements DayActivitySource {
     state.currentActivity = decide(state, startedAt, this.engine, this.random);
     state.mood = deriveMood(state);
     this.state = state;
-    this.dayKey = localDateKey(startedAt, this.engine.timeZone);
-    this.recordActivity(state.currentActivity);
   }
 
   /** The home this agent lives in, as derived from its apartment config. */
@@ -370,80 +375,14 @@ export class LifeSimulation implements DayActivitySource {
     for (let step = 0; step < hoursToAdvance; step += 1) {
       const next = new Date(new Date(this.state.lastUpdatedAt).getTime() + HOUR_MS);
       transition(this.state, next, this.engine, this.random);
-      this.recordActivity(this.state.currentActivity);
     }
     return this.getSnapshot();
   }
 
-  /**
-   * Return today's realized and near-term projected home routine. The projection
-   * is in-memory only and never writes activity or owner data to disk.
-   */
-  getDayActivities(now: Date = this.clock()): DayActivity[] {
-    const at = validDate(now, "activity time");
-    this.advanceTo(at);
-    const timeZone = this.engine.timeZone;
-    const dateKey = localDateKey(at, timeZone);
-    // The simulation is deterministic, so a forecast made earlier today stays valid as real time catches up.
-    if (this.forecast?.dateKey !== dateKey) {
-      const forecast = new Map<number, DayActivity>();
-      const forecastState = cloneState(this.state);
-      const forecastRandom = this.random.clone();
-      let forecastAt = new Date(forecastState.lastUpdatedAt);
-      for (let step = 0; step < 26; step += 1) {
-        forecastAt = new Date(forecastAt.getTime() + HOUR_MS);
-        if (localDateKey(forecastAt, timeZone) !== dateKey) break;
-        transition(forecastState, forecastAt, this.engine, forecastRandom);
-        forecast.set(localHour(forecastAt, timeZone), dayActivity(forecastState.currentActivity));
-      }
-      this.forecast = { dateKey, activities: forecast };
-    }
-    const activities = new Map<number, DayActivity>([...this.forecast.activities, ...this.dayActivities]);
-
-    const currentHour = localHour(at, timeZone);
-    const hourly: DayActivity[] = [];
-    for (let hour = 0; hour < 24; hour += 1) {
-      hourly.push(activities.get(hour) ?? {
-        startHour: hour,
-        endHour: hour + 1,
-        activity: "idle",
-        caption: hour < currentHour ? "Life starts later today" : "A quiet moment at home",
-        room: this.engine.environment.startRoom,
-      });
-    }
-
-    const merged: DayActivity[] = [];
-    for (const activity of hourly) {
-      const previous = merged.at(-1);
-      if (previous && previous.activity === activity.activity && previous.caption === activity.caption && previous.room === activity.room) {
-        merged[merged.length - 1] = activitySlot(previous, previous.startHour, activity.endHour);
-      } else {
-        merged.push({ ...activity });
-      }
-    }
-    return merged;
+  /** Return the single activity chosen by the life engine for the supplied time. */
+  getCurrentActivity(now: Date = this.clock()): LifeActivity {
+    return cloneActivity(this.advanceTo(now).currentActivity);
   }
-
-  private recordActivity(activity: LifeActivity): void {
-    const now = new Date(activity.startedAt);
-    const dateKey = localDateKey(now, this.engine.timeZone);
-    if (dateKey !== this.dayKey) {
-      this.dayKey = dateKey;
-      this.dayActivities.clear();
-    }
-    this.dayActivities.set(localHour(now, this.engine.timeZone), dayActivity(activity));
-  }
-}
-
-/** The scene-facing slice of an activity: a backwards-compatible pose, caption, and room. */
-function dayActivity(activity: LifeActivity): DayActivity {
-  return {
-    startHour: activity.startHour,
-    endHour: activity.endHour,
-    activity: activity.activity,
-    caption: activity.caption,
-    room: activity.room,
-  };
 }
 
 export function createLifeSimulation(options: LifeSimulationOptions): LifeSimulation {

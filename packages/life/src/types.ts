@@ -1,6 +1,6 @@
 /** Shared life types: the agent's body and mind, independent of any home layout. */
 
-import type { DayActivity, RoomId } from "@avatar-gateway/starter-apartment";
+import type { HomeActivity, RoomId } from "@avatar-gateway/starter-apartment";
 import type { LifeObjectState } from "./environment.js";
 import type { ToolParams, ToolVerb } from "./tools.js";
 
@@ -24,7 +24,7 @@ export interface LifeMood {
 /** The verb of the tool the agent is using. Kept as the activity id for older callers. */
 export type LifeActivityId = ToolVerb;
 
-export interface LifeActivity extends DayActivity {
+export interface LifeActivity extends HomeActivity {
   id: LifeActivityId;
   room: RoomId;
   /** The tool chosen from those the home made available. */

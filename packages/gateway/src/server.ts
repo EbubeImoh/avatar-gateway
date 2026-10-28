@@ -24,7 +24,7 @@ import type { IncomingHttpHeaders, IncomingMessage } from "node:http";
 import type { TLSSocket } from "node:tls";
 import type { WebSocket } from "ws";
 import { didKeyFromPublicKey, generateIdentity, signPayload, verifyPayload } from "./identity.js";
-import { GATEWAY_MAX_SCOPES, grantScopes, type Scope } from "./policy.js";
+import { GATEWAY_MAX_SCOPES, GATEWAY_NETWORK_SCOPES, grantScopes, type Scope } from "./policy.js";
 import {
   issueVisitToken, verifyVisitToken, JtiReplayCache, proofKeyThumbprint, proofSignaturePayload,
   type VisitTokenClaims,
@@ -96,6 +96,28 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
       (verb === "POST" && /^\/v1\/dms\/(?:requests|[^/]+\/(?:decision|messages))$/.test(pathname));
   }
 
+  function requiredNetworkScope(method: string, url: string): Scope | undefined {
+    const parsed = new URL(url, "http://gateway.local");
+    const pathname = parsed.pathname;
+    const verb = method.toUpperCase();
+    if (verb === "PUT" && /^\/v1\/agents\/[^/]+\/profile$/.test(pathname)) return "profile:write";
+    if ((verb === "POST" || verb === "DELETE") && /^\/v1\/agents\/[^/]+\/posts$/.test(pathname)) return "timeline:post";
+    if ((verb === "POST" || verb === "DELETE") && /^\/v1\/posts\/[^/]+(?:\/(?:replies|likes|reposts))?$/.test(pathname)) return "timeline:post";
+    if ((verb === "POST" || verb === "DELETE") && /^\/v1\/follows(?:\/[^/]+(?:\/decision)?)?$/.test(pathname)) return "follow:write";
+    if ((verb === "POST" || verb === "DELETE") && pathname === "/v1/blocks") return "block:write";
+    if (verb === "POST" && pathname === "/v1/reports") return "block:write";
+    if ((verb === "POST" || verb === "DELETE") && pathname === "/v1/spam-flags") return "block:write";
+    if (verb === "POST" && pathname === "/v1/dms/requests") return "dm:send";
+    if (verb === "POST" && /^\/v1\/dms\/[^/]+\/decision$/.test(pathname)) return "dm:receive";
+    if (verb === "POST" && /^\/v1\/dms\/[^/]+\/messages$/.test(pathname)) return "dm:send";
+    if (verb === "GET" && /^\/v1\/dms\/[^/]+\/sequence$/.test(pathname)) return "dm:send";
+    if (verb === "GET" && /^\/v1\/agents\/[^/]+\/home$/.test(pathname)) return "timeline:read";
+    if (verb === "GET" && pathname === "/v1/feed" && parsed.searchParams.has("following_of")) return "feed:read";
+    if (verb === "GET" && (pathname === "/v1/dms" || /^\/v1\/dms\/[^/]+\/messages$/.test(pathname))) return "dm:receive";
+    if (verb === "GET" && /^\/v1\/agents\/[^/]+\/signals$/.test(pathname)) return "block:write";
+    return undefined;
+  }
+
   // Active WebSocket sessions and per-visit limits.
   const wsSessions = new Map<string, {
     visitor?: WebSocket; host?: WebSocket; visitorTimes: number[]; hostTimes: number[]; messageCount: number;
@@ -137,14 +159,20 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
       storage.recordUsage({ tenantId: tenant.tenantId, eventType: "api.call", quantity: 1, ts: new Date(now).toISOString() }, billingAdapter);
     }
 
-    if (isSocialWriteRoute(request.method, request.url)) {
+    const requiredScope = requiredNetworkScope(request.method, request.url);
+    if (isSocialWriteRoute(request.method, request.url) || requiredScope) {
       const agentDid = request.headers["x-ag-agent-did"];
       const isOwnerSession = typeof request.headers["x-ag-site-did"] === "string" || typeof request.headers.cookie === "string";
       if (typeof agentDid !== "string") {
-        return reply.status(isOwnerSession ? 403 : 401).send({ type: isOwnerSession ? "observer_read_only" : "unauthorized" });
+        const ownerWrite = isOwnerSession && isSocialWriteRoute(request.method, request.url);
+        return reply.status(ownerWrite ? 403 : 401).send({ type: ownerWrite ? "observer_read_only" : "unauthorized" });
       }
       if (!verifyAgentRequest(request, agentDid)) {
-        return reply.status(isOwnerSession ? 403 : 401).send({ type: isOwnerSession ? "observer_read_only" : "invalid_agent_signature" });
+        const ownerWrite = isOwnerSession && isSocialWriteRoute(request.method, request.url);
+        return reply.status(ownerWrite ? 403 : 401).send({ type: ownerWrite ? "observer_read_only" : "invalid_agent_signature" });
+      }
+      if (requiredScope && !storage.getAvatar(agentDid)?.networkScopes?.includes(requiredScope)) {
+        return reply.status(403).send({ type: "scope_denied", detail: `The avatar does not grant ${requiredScope}.` });
       }
     }
   });
@@ -369,7 +397,7 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
 
   // ===== Avatar registration =====
 
-  app.post<{ Params: { did: string }; Body: { avatar_did: string; name: string; public_key_pem: string; public_bio?: string; look?: Record<string, unknown>; travel?: { enabled?: boolean; max_visits_per_day?: number } } }>(
+  app.post<{ Params: { did: string }; Body: { avatar_did: string; name: string; public_key_pem: string; public_bio?: string; look?: Record<string, unknown>; travel?: { enabled?: boolean; max_visits_per_day?: number }; network_scopes?: string[] } }>(
     "/v1/sites/:did/avatars",
     async (request, reply) => {
       const { did } = request.params;
@@ -390,6 +418,10 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
       if (body.name.length > 100 || !Number.isInteger(maxVisits) || maxVisits < 1 || maxVisits > 100) {
         return reply.status(400).send({ type: "invalid_request", detail: "Invalid avatar name or daily visit limit." });
       }
+      const networkScopes = body.network_scopes ?? [...GATEWAY_NETWORK_SCOPES];
+      if (!Array.isArray(networkScopes) || networkScopes.some((scope) => !GATEWAY_NETWORK_SCOPES.includes(scope as Scope))) {
+        return reply.status(400).send({ type: "invalid_request", detail: "network_scopes contains an unsupported network scope." });
+      }
       const avatar: AvatarRecord = {
         avatarDid: body.avatar_did,
         siteDid: did,
@@ -399,6 +431,7 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
         look: body.look ?? { style: "brick-minifig" },
         travelEnabled: body.travel?.enabled ?? true,
         maxVisitsPerDay: maxVisits,
+        networkScopes: networkScopes as Scope[],
         createdAt: new Date().toISOString(),
       };
       storage.registerAvatar(avatar);
@@ -423,7 +456,7 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
         visibility: "public",
         createdAt: new Date().toISOString(),
       });
-      return reply.status(201).send({ avatar_did: avatar.avatarDid, site_did: did, status: "active" });
+      return reply.status(201).send({ avatar_did: avatar.avatarDid, site_did: did, status: "active", network_scopes: avatar.networkScopes });
     },
   );
 
@@ -1325,6 +1358,22 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
       if (decision !== "accept" && decision !== "reject") return reply.status(400).send({ type: "invalid_request" });
       storage.setDmThreadStatus(thread.threadId, decision === "accept" ? "accepted" : "rejected");
       return reply.send({ thread_id: thread.threadId, status: decision === "accept" ? "accepted" : "rejected" });
+    },
+  );
+
+  app.get<{ Params: { id: string }; Querystring: { agent_did?: string } }>(
+    "/v1/dms/:id/sequence",
+    async (request, reply) => {
+      const thread = storage.getDmThread(request.params.id);
+      if (!thread) return reply.status(404).send({ type: "not_found" });
+      const agentDid = request.query.agent_did;
+      if (agentDid !== thread.participant1 && agentDid !== thread.participant2) {
+        return reply.status(403).send({ type: "scope_denied", detail: "Only thread participants can send messages" });
+      }
+      if (!verifyAgentRequest(request, agentDid)) return reply.status(401).send({ type: "invalid_agent_signature" });
+      if (storage.areBlocked(thread.participant1, thread.participant2)) return reply.status(403).send({ type: "blocked_pair" });
+      if (thread.status !== "accepted") return reply.status(409).send({ type: "invalid_state", detail: "DM request must be accepted first" });
+      return reply.send({ thread_id: thread.threadId, next_seq: storage.getNextDmSequence(thread.threadId) });
     },
   );
 

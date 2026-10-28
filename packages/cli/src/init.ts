@@ -5,7 +5,8 @@ import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { isIP } from "node:net";
 import { createInterface } from "node:readline/promises";
-import { generateIdentity, signGatewayRequest } from "@avatar-gateway/gateway";
+import { GATEWAY_NETWORK_SCOPES, generateIdentity, signGatewayRequest } from "@avatar-gateway/gateway";
+import type { Scope } from "@avatar-gateway/gateway";
 import { buildScaffold, detectFramework } from "./detect.js";
 import type { DetectedFramework } from "./detect.js";
 
@@ -21,6 +22,7 @@ export interface InitOptions {
   siteOrigin?: string;
   aiProvider?: AiProvider;
   aiProviderEnvVar?: string;
+  networkScopes?: Scope[];
   backendPath?: string;
   /** Tests and offline scaffolding may opt out; the public CLI installs by default. */
   installPackages?: boolean;
@@ -58,6 +60,7 @@ interface LocalConfig extends Record<string, unknown> {
   backendUrl?: string;
   tenantApiKey?: string;
   siteOrigin?: string;
+  networkScopes?: Scope[];
 }
 
 const PROVIDER_ENV: Record<AiProvider, string> = {
@@ -249,6 +252,7 @@ async function tryPublishProfile(config: LocalConfig, origin: string): Promise<b
     public_key_pem: config.avatarPublicKeyPem,
     public_bio: "",
     look: { style: "brick-minifig" },
+    network_scopes: config.networkScopes ?? [...GATEWAY_NETWORK_SCOPES],
   });
   await register(`/v1/agents/${encodeURIComponent(config.avatarDid ?? "")}/profile`, "PUT", {
     name: config.avatarName,
@@ -319,6 +323,10 @@ export async function runInit(opts: InitOptions = {}, cwd = process.cwd()): Prom
     : generateIdentity();
   const chosenName = avatarName;
   const lifeStartedAt = currentConfig?.lifeStartedAt ?? new Date().toISOString();
+  const networkScopes = opts.networkScopes ?? currentConfig?.networkScopes ?? [...GATEWAY_NETWORK_SCOPES];
+  if (!Array.isArray(networkScopes) || networkScopes.some((scope) => !GATEWAY_NETWORK_SCOPES.includes(scope))) {
+    throw new Error("networkScopes must contain only supported Shubur network scopes.");
+  }
   const handleHost = new URL(gatewayUrl).hostname;
   const config: LocalConfig = {
     ...currentConfig,
@@ -332,6 +340,7 @@ export async function runInit(opts: InitOptions = {}, cwd = process.cwd()): Prom
     avatarPrivateKeyPem: avatarIdentity.privateKeyPem,
     avatarPublicKeyPem: avatarIdentity.publicKeyPem,
     lifeStartedAt,
+    networkScopes: [...new Set(networkScopes)],
     avatarName: chosenName,
     aiProvider,
     aiProviderEnvVar,

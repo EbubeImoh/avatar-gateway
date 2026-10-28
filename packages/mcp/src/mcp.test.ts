@@ -173,7 +173,7 @@ describe("local apartment and owner-channel tools", () => {
 
   it("rejects invalid apartment values without writing them", async () => {
     await expect(toolCustomiseApartment({ avatar: { outfitColor: "red" } }, tmpDir)).rejects.toThrow("six-digit hex");
-    await expect(toolCustomiseApartment({ dayCycle: { timezone: "Not/AZone" } }, tmpDir)).rejects.toThrow("IANA timezone");
+    await expect(toolCustomiseApartment({ timeZone: "Not/AZone" }, tmpDir)).rejects.toThrow("IANA timezone");
     await expect(toolCustomiseApartment({ furniture: { runScript: true } as never }, tmpDir)).rejects.toThrow("boolean option");
     expect(await import("node:fs/promises").then(({ readdir }) => readdir(join(tmpDir, ".avatar-gateway")).catch(() => []))).toEqual([]);
   });

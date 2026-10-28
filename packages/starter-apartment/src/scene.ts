@@ -1,4 +1,4 @@
-/** Configuration validation, local day-cycle helpers, and original apartment SVG artwork. */
+/** Configuration validation, current local lighting, and apartment SVG artwork. */
 
 import type {
   ApartmentConfig,
@@ -6,7 +6,7 @@ import type {
   ApartmentRoom,
   AvatarActivity,
   AvatarAccessory,
-  DayActivity,
+  HomeActivity,
   DayPeriod,
   FurnitureKind,
   ResolvedApartmentConfig,
@@ -14,18 +14,18 @@ import type {
 } from "./types.js";
 import {
   DEFAULT_AVATAR_LOOK,
-  DEFAULT_DAY_CYCLE,
   DEFAULT_FURNITURE,
   DEFAULT_LAYOUT,
   DEFAULT_LIGHTING,
   DEFAULT_PLACE_NAME,
   DEFAULT_ROOM_THEME,
+  DEFAULT_TIME_ZONE,
 } from "./types.js";
 
 const ROOM_IDS = new Set<RoomId>(["studio", "living", "kitchen", "bedroom", "bathroom", "gym", "garage"]);
 const FURNITURE_KINDS = new Set<FurnitureKind>([
   "desk", "bed", "bookshelf", "plant", "window", "floorLamp", "coffeeTable", "sofa",
-  "island", "sink", "shower", "mirror", "weights", "mat", "car", "toolShelf",
+  "island", "sink", "shower", "mirror", "weights", "mat", "car", "toolShelf", "phone",
 ]);
 const ACCESSORIES = new Set<AvatarAccessory>(["glasses", "headphones", "hat", "none"]);
 const ACTIVITIES = new Set<AvatarActivity>(["sleeping", "waking", "coffee", "working", "reading", "stretching", "idle", "walking"]);
@@ -66,32 +66,12 @@ function validateProp(prop: ApartmentProp, index: number, roomIds: Set<RoomId>):
   return { ...prop };
 }
 
-function validateActivities(activities: DayActivity[], roomIds: Set<RoomId>): DayActivity[] {
-  if (!Array.isArray(activities) || activities.length < 1 || activities.length > 48) throw new Error("dayCycle.activities must contain 1–48 activities.");
-  const sorted = [...activities].sort((a, b) => a.startHour - b.startHour);
-  let expectedStart = 0;
-  for (const [index, item] of sorted.entries()) {
-    if (!Number.isInteger(item.startHour) || !Number.isInteger(item.endHour) || item.startHour !== expectedStart || item.endHour <= item.startHour || item.endHour > 24) {
-      throw new Error("dayCycle.activities must be contiguous, non-overlapping whole-hour intervals covering 0–24.");
-    }
-    if (!ACTIVITIES.has(item.activity)) throw new Error(`dayCycle.activities[${index}].activity is not supported.`);
-    if (typeof item.caption !== "string" || !item.caption.trim() || item.caption.length > 120) throw new Error(`dayCycle.activities[${index}].caption must contain 1–120 characters.`);
-    if (item.room) {
-      assertRoomId(item.room, `dayCycle.activities[${index}].room`);
-      if (!roomIds.has(item.room)) throw new Error(`dayCycle.activities[${index}] refers to a room that is not in the layout.`);
-    }
-    expectedStart = item.endHour;
-  }
-  if (expectedStart !== 24) throw new Error("dayCycle.activities must cover the entire 24-hour day.");
-  return sorted.map((activity) => ({ ...activity }));
-}
-
 function validateTimezone(timezone: string): void {
   try {
     if (typeof timezone !== "string" || !timezone.trim()) throw new Error("invalid");
     new Intl.DateTimeFormat("en", { timeZone: timezone });
   }
-  catch { throw new Error("dayCycle.timezone must be a valid IANA timezone."); }
+  catch { throw new Error("timeZone must be a valid IANA timezone."); }
 }
 
 export function resolveConfig(config: ApartmentConfig = {}): ResolvedApartmentConfig {
@@ -138,19 +118,8 @@ export function resolveConfig(config: ApartmentConfig = {}): ResolvedApartmentCo
     throw new Error("lighting.nightDimOpacity must be between 0 and 0.8.");
   }
 
-  const dayCycle = {
-    ...DEFAULT_DAY_CYCLE,
-    ...config.dayCycle,
-    activities: validateActivities(
-      config.dayCycle?.activities ?? DEFAULT_DAY_CYCLE.activities.map((activity) => ({
-        ...activity,
-        ...(activity.room && !roomIds.has(activity.room) ? { room: startRoom } : {}),
-      })),
-      roomIds,
-    ),
-  };
-  if (typeof dayCycle.enabled !== "boolean") throw new Error("dayCycle.enabled must be a boolean.");
-  validateTimezone(dayCycle.timezone);
+  const timeZone = config.timeZone ?? DEFAULT_TIME_ZONE;
+  validateTimezone(timeZone);
 
   if (config.gateway) {
     if (!config.gateway.selector.trim() || !config.gateway.backendUrl.startsWith("/") || config.gateway.backendUrl.startsWith("//") || config.gateway.backendUrl.includes("\\")) {
@@ -167,7 +136,7 @@ export function resolveConfig(config: ApartmentConfig = {}): ResolvedApartmentCo
     layout: { startRoom, rooms },
     props,
     lighting,
-    dayCycle,
+    timeZone,
     gateway: config.gateway,
     assetCredits: config.assetCredits,
   };
@@ -182,13 +151,6 @@ export function localHour(timezone: string, now = new Date()): number {
   } catch {
     return now.getHours();
   }
-}
-
-export function currentActivity(activities: DayActivity[], timezone: string, now = new Date()): DayActivity {
-  const hour = localHour(timezone, now);
-  return activities.find((item) => hour >= item.startHour && hour < item.endHour)
-    ?? activities[0]
-    ?? { startHour: 0, endHour: 24, activity: "idle", caption: "Having a quiet moment" };
 }
 
 export function dayPeriod(timezone: string, now = new Date()): DayPeriod {
@@ -239,6 +201,7 @@ function furnitureSvg(kind: FurnitureKind, x: number, y: number, scale = 1, acce
     mat: `<rect x="4" y="25" width="115" height="55" rx="25" fill="${accent}" stroke="${ink}" stroke-width="4"/><path d="M27 28v49m67-49v49" stroke="#d3e0d9" stroke-width="3" opacity=".7"/>`,
     car: `<path d="M10 59l12-25q4-9 14-9h49q10 0 16 9l19 25v21H9z" fill="${accent}" stroke="${ink}" stroke-width="4"/><path d="M29 34h26v21H18zm33 0h22q8 0 12 8l8 13H62z" fill="#bed7d8" stroke="${ink}" stroke-width="3"/><circle cx="32" cy="81" r="12" fill="#343c40"/><circle cx="99" cy="81" r="12" fill="#343c40"/><circle cx="32" cy="81" r="5" fill="#bdc7c4"/><circle cx="99" cy="81" r="5" fill="#bdc7c4"/>`,
     toolShelf: `<rect x="4" y="2" width="105" height="92" fill="${wood}" stroke="${ink}" stroke-width="4"/><path d="M8 32h97M8 62h97" stroke="#654c3b" stroke-width="5"/><path d="M18 6v22m18-22v22m25-22v22m22 6v22m-44-22v22m47 8v23m20-23v23" stroke="${accent}" stroke-width="7"/>`,
+    phone: `<rect x="35" y="2" width="48" height="96" rx="9" fill="#202a35" stroke="${ink}" stroke-width="4"/><rect x="41" y="12" width="36" height="70" rx="3" fill="#8ad4dc"/><path d="M48 24h23M48 34h20M48 44h23M48 54h16" stroke="#315b68" stroke-width="4" stroke-linecap="round"/><circle cx="59" cy="90" r="3" fill="#a8b7c0"/>`,
   };
   return `<g transform="translate(${dx} ${dy}) scale(${s})" role="img" aria-label="${esc(kind)}">${shapes[kind]}</g>`;
 }
@@ -284,7 +247,7 @@ function defaultFurniturePosition(kind: FurnitureKind): { x: number; y: number; 
     coffeeTable: { x: 290, y: 264, scale: 1 }, sofa: { x: 160, y: 205, scale: 1 }, island: { x: 218, y: 214, scale: 1 },
     sink: { x: 100, y: 201, scale: 0.9 }, shower: { x: 407, y: 92, scale: 0.88 }, mirror: { x: 286, y: 87, scale: 0.9 },
     weights: { x: 365, y: 229, scale: 1 }, mat: { x: 183, y: 279, scale: 0.9 }, car: { x: 181, y: 189, scale: 1.45 },
-    toolShelf: { x: 425, y: 104, scale: 0.9 },
+    toolShelf: { x: 425, y: 104, scale: 0.9 }, phone: { x: 320, y: 208, scale: 0.55 },
   };
   return positions[kind];
 }
@@ -311,16 +274,14 @@ function renderProps(room: ApartmentRoom, props: ApartmentProp[], accent: string
 
 export interface BuiltScene {
   svg: string;
-  activity: DayActivity;
+  activity: HomeActivity;
   period: DayPeriod;
   room: ApartmentRoom;
 }
 
-export function buildSceneSvg(cfg: ResolvedApartmentConfig, now = new Date(), selectedRoom?: RoomId, activityOverride?: DayActivity): BuiltScene {
-  const period = dayPeriod(cfg.dayCycle.timezone, now);
-  const activity = activityOverride ?? (cfg.dayCycle.enabled
-    ? currentActivity(cfg.dayCycle.activities, cfg.dayCycle.timezone, now)
-    : { ...cfg.dayCycle.activities[0]!, activity: "idle" as const, caption: "Having a quiet moment" });
+export function buildSceneSvg(cfg: ResolvedApartmentConfig, now = new Date(), selectedRoom?: RoomId, activityOverride?: HomeActivity): BuiltScene {
+  const period = dayPeriod(cfg.timeZone, now);
+  const activity = activityOverride ?? { activity: "idle" as const, caption: "The room is ready for your agent", room: cfg.layout.startRoom };
   const activityRoom = activity.room && cfg.layout.rooms.some((room) => room.id === activity.room)
     ? activity.room
     : cfg.layout.startRoom;
@@ -336,12 +297,12 @@ export function buildSceneSvg(cfg: ResolvedApartmentConfig, now = new Date(), se
   const roomFurniture = renderFurniture(currentRoom, cfg);
   const props = renderProps(currentRoom, cfg.props, cfg.room.accentColor);
   const showWindow = currentRoom.furniture.includes("window") && cfg.furniture.window;
-  const avatarInRoom = currentRoom.id === activityRoom;
+  const avatarInRoom = activityOverride !== undefined && currentRoom.id === activityRoom;
   const avatarX = activity.activity === "working" ? 212 : activity.activity === "sleeping" ? 362 : 265;
   const avatarY = activity.activity === "sleeping" ? 202 : 195;
-  const scheduleCaption = avatarInRoom ? activity.caption : `A quiet ${currentRoom.name.toLowerCase()} · avatar is in the ${cfg.layout.rooms.find((item) => item.id === activityRoom)?.name.toLowerCase() ?? "home"}`;
+  const currentCaption = avatarInRoom ? activity.caption : `A quiet ${currentRoom.name.toLowerCase()} · avatar is in the ${cfg.layout.rooms.find((item) => item.id === activityRoom)?.name.toLowerCase() ?? "home"}`;
 
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 390" role="img" aria-label="${esc(currentRoom.name)} in the Shubur Starter Apartment. ${esc(scheduleCaption)}">
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 390" role="img" aria-label="${esc(currentRoom.name)} in the Shubur Starter Apartment. ${esc(currentCaption)}">
     <defs>
       <linearGradient id="ag-wall" x2="0" y2="1"><stop offset="0" stop-color="${wallColor}"/><stop offset="1" stop-color="#bdb8aa"/></linearGradient>
       <linearGradient id="ag-floor" x2="0" y2="1"><stop offset="0" stop-color="${floorColor}"/><stop offset="1" stop-color="#786752"/></linearGradient>
@@ -377,10 +338,6 @@ export const APARTMENT_STYLES = `
 .ag-apartment__avatar{transform-box:fill-box;transform-origin:center bottom;animation:ag-bob 2.8s ease-in-out infinite}
 .ag-apartment[data-activity=walking] .ag-apartment__avatar{animation-duration:.55s}
 .ag-apartment__caption{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:12px 2px 5px;font-size:13px;font-weight:650}
-.ag-apartment__time{color:#66726e;font-weight:500}
-.ag-apartment__day{position:relative;display:flex;height:8px;overflow:hidden;border:1px solid #25333a;border-radius:999px;background:#e5e0d2}
-.ag-apartment__day span{height:100%;border-right:1px solid rgba(37,51,58,.35)}
-.ag-apartment__now{position:absolute;top:0;bottom:0;width:3px;margin-left:-1.5px;border-radius:2px;background:#25333a}
 @keyframes ag-bob{50%{translate:0 -3px}}
 @keyframes ag-enter{from{opacity:.35}}
 @media(prefers-reduced-motion:reduce){.ag-apartment__avatar,.ag-apartment__stage svg{animation:none}}

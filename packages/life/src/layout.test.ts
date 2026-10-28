@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { resolveConfig } from "@avatar-gateway/starter-apartment";
 import type { ApartmentConfig } from "@avatar-gateway/starter-apartment";
 import {
   applyToolToWorld, availableTools, buildEnvironment, createLifeSimulation, createSeededRandom, formatLifeStatus,
@@ -109,12 +108,12 @@ describe("layout-driven environment", () => {
   });
 });
 
-describe("generated days", () => {
-  it("produces different days for the same agent in different layouts", () => {
+describe("autonomous home choices", () => {
+  it("chooses from the objects each same agent's home makes available", () => {
     const options = { seed: "same-agent", startedAt: start };
     const apartment = live(options, 24);
     const flat = live({ ...options, apartment: STUDIO_FLAT }, 24);
-    expect(flat.map((activity) => activity.caption)).not.toEqual(apartment.map((activity) => activity.caption));
+    expect(flat.map(useKey)).not.toEqual(apartment.map(useKey));
     const flatRooms = new Set(STUDIO_FLAT.layout!.rooms!.map((room) => room.id));
     for (const activity of flat) expect(flatRooms.has(activity.room)).toBe(true);
     expect(flat.some((activity) => activity.objectId?.includes("desk") || activity.objectId?.includes("bed"))).toBe(false);
@@ -128,11 +127,13 @@ describe("generated days", () => {
     expect(live({ ...options, seed: 2027 }, 30).map(useKey)).not.toEqual(live(options, 30).map(useKey));
   }, SLOW);
 
-  it("forecasts exactly what later happens", () => {
+  it("returns only the activity currently chosen by the simulation", () => {
     const options = { agentId: "agent", seed: "forecast", startedAt: new Date("2026-10-27T00:00:00.000Z"), timeZone: "UTC" };
-    const early = createLifeSimulation(options).getDayActivities(new Date("2026-10-27T01:00:00.000Z"));
-    const late = createLifeSimulation(options).getDayActivities(new Date("2026-10-27T23:00:00.000Z"));
-    expect(late).toEqual(early);
+    const simulation = createLifeSimulation(options);
+    const current = simulation.getCurrentActivity(new Date("2026-10-27T01:00:00.000Z"));
+    expect(current).toEqual(simulation.getSnapshot().currentActivity);
+    expect(current).not.toHaveProperty("startHour");
+    expect(current).not.toHaveProperty("endHour");
   }, SLOW);
 
   it("guarantees no activity: every tool and verb is skipped by some agent", () => {
@@ -160,7 +161,7 @@ describe("generated days", () => {
     const all = days.flat();
     expect(all.some((activity) => activity.objectId !== undefined && !activity.hinted)).toBe(true);
     expect(all.some((activity) => activity.hinted)).toBe(true);
-    // Every hinted object present in the home is left unused by at least one agent for a whole day.
+    // Every hinted object present in the home is left unused by at least one agent in these runs.
     const hinted = environment.objects.filter((object) => object.hints.length > 0).map((object) => object.id);
     const ignoredBySomeone = hinted.filter((id) => days.some((day) => !day.some((activity) => activity.objectId === id || activity.params.at === id)));
     expect(ignoredBySomeone.length).toBeGreaterThan(hinted.length / 2);
@@ -208,16 +209,6 @@ describe("generated days", () => {
     expect(run.some((activity) => activity.id === "eat")).toBe(false);
     const state = projectLifeState({ agentId: "agent", seed: "sparse", apartment: bare, startedAt: start, now: new Date(start.getTime() + 48 * HOUR), timeZone: "UTC" });
     expect(formatLifeStatus(state)).toContain("Place: Bare room · garage");
-    const day = createLifeSimulation({ agentId: "agent", seed: "sparse", apartment: bare, startedAt: start, timeZone: "UTC" }).getDayActivities(start);
-    expect(() => resolveConfig({ ...bare, dayCycle: { activities: day } })).not.toThrow();
-  }, SLOW);
-
-  it("produces scene-valid day cycles for each layout", () => {
-    for (const apartment of [undefined, STUDIO_FLAT]) {
-      const simulation = createLifeSimulation({ agentId: "agent", seed: "scene", apartment, startedAt: start, timeZone: "UTC" });
-      const day = simulation.getDayActivities(new Date(start.getTime() + 6 * HOUR));
-      expect(() => resolveConfig({ ...apartment, dayCycle: { timezone: "UTC", activities: day } })).not.toThrow();
-    }
   }, SLOW);
 });
 

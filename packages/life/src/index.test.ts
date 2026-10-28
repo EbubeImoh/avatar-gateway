@@ -67,34 +67,22 @@ describe("seeded life simulation", () => {
     expect(state.place.id).toBe("home");
   });
 
-  it("returns a complete validated apartment day cycle without mutating its state when read twice", () => {
+  it("returns one current activity without exposing a daily plan", () => {
     const simulation = createLifeSimulation({ agentId: "agent-cycle", seed: 71, startedAt: start, timeZone: "Africa/Lagos" });
-    const first = simulation.getDayActivities(at(8));
-    const snapshot = simulation.getSnapshot();
-    const second = simulation.getDayActivities(at(8));
-    expect(first).toEqual(second);
-    expect(first[0]?.startHour).toBe(0);
-    expect(first.at(-1)?.endHour).toBe(24);
-    expect(first.reduce((total, activity) => total + activity.endHour - activity.startHour, 0)).toBe(24);
-    for (const activity of first) {
-      expect(activity.room).toBeTruthy();
-      expect(activity.startHour).toBeGreaterThanOrEqual(0);
-      expect(activity.endHour).toBeLessThanOrEqual(24);
-    }
-    expect(simulation.getSnapshot()).toEqual(snapshot);
+    const activity = simulation.getCurrentActivity(at(8));
+    expect(activity).toEqual(simulation.getSnapshot().currentActivity);
+    expect(activity.room).toBeTruthy();
+    expect(activity.caption).toBeTruthy();
+    expect(activity).not.toHaveProperty("startHour");
+    expect(activity).not.toHaveProperty("endHour");
   });
 
-  it("moves the avatar between home rooms when an apartment polls it on a fast time-lapse clock", () => {
+  it("moves the agent between home rooms as its current needs and choices change", () => {
     const simulation = createLifeSimulation({ agentId: "agent-timelapse", seed: "shubur-site", startedAt: at(-24), timeZone: "UTC" });
     const rooms = new Set<string>();
     const activities = new Set<string>();
-    // A preview polls every few simulated minutes; whole-hour transitions must still apply exactly once.
-    for (let minutes = 0; minutes <= 24 * 60; minutes += 20) {
-      const now = new Date(start.getTime() + minutes * 60 * 1000);
-      const day = simulation.getDayActivities(now);
-      const hour = now.getUTCHours();
-      const current = day.find((activity) => hour >= activity.startHour && hour < activity.endHour)!;
-      expect(current).toBeDefined();
+    for (let hour = 0; hour <= 24; hour += 1) {
+      const current = simulation.getCurrentActivity(new Date(start.getTime() + hour * 60 * 60 * 1000));
       rooms.add(current.room!);
       activities.add(current.activity);
     }

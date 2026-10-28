@@ -9,6 +9,11 @@ export const GATEWAY_MAX_SCOPES: readonly Scope[] = [
   "follow:write", "dm:send", "dm:receive", "feed:read", "block:write",
 ] as const;
 
+/** Scopes that authorize actions available through a physical Shubur phone. */
+export const GATEWAY_NETWORK_SCOPES: readonly Scope[] = [
+  "profile:write", "timeline:read", "timeline:post", "follow:write", "dm:send", "dm:receive", "feed:read", "block:write",
+] as const;
+
 export class ScopeDeniedError extends Error {
   readonly code = "scope_denied";
   constructor(readonly requiredScope: Scope) {

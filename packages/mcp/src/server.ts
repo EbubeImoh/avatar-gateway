@@ -192,8 +192,8 @@ function registerTools(server: McpServer, cwd: string): void {
     pack: z.string().trim().min(1).max(2048),
   }, async (args) => toolInstallPack(args.pack, cwd));
 
-  registerTextTool(server, "shubur_customise_apartment", "Customize the Starter Apartment with a partial ApartmentConfig JSON object: home name, avatar, room theme, furniture flags, layout.rooms/startRoom, props, lighting, dayCycle.timezone/activities, and optional gateway mount. Values are validated and saved locally.", {
-    config_json: z.string().trim().min(2).max(64_000).describe("A JSON object containing a partial ApartmentConfig. Colors are #RRGGBB; dayCycle activities must cover 00:00–24:00 without gaps."),
+  registerTextTool(server, "shubur_customise_apartment", "Customize the Starter Apartment with a partial ApartmentConfig JSON object: home name, avatar, room theme, furniture flags, layout.rooms/startRoom, props, timezone, lighting, and optional gateway mount. Values are validated and saved locally.", {
+    config_json: z.string().trim().min(2).max(64_000).describe("A JSON object containing a partial ApartmentConfig. Colors are #RRGGBB; timeZone must be a valid IANA timezone."),
   }, async (args) => {
     let config: unknown;
     try { config = JSON.parse(args.config_json) as unknown; }

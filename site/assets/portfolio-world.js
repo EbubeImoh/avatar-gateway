@@ -1,3 +1,613 @@
+// packages/starter-apartment/dist/types.js
+/** Typed configuration for the generic Shubur Starter Apartment. */
+const DEFAULT_PLACE_NAME = "Starter Apartment";
+const DEFAULT_AVATAR_LOOK = {
+	skinTone: "#d99b63",
+	hairColor: "#252b31",
+	outfitColor: "#4361b5",
+	trouserColor: "#34464d",
+	accessories: [],
+	name: "My Avatar"
+};
+const DEFAULT_ROOM_THEME = {
+	wallColor: "#ddd9cb",
+	floorColor: "#ad9875",
+	accentColor: "#597b72",
+	windowDaytimeColor: "#b7d7dc",
+	windowNightColor: "#222f4d"
+};
+const DEFAULT_FURNITURE = {
+	desk: true,
+	bed: true,
+	bookshelf: true,
+	plant: true,
+	window: true,
+	floorLamp: true,
+	coffeeTable: true,
+	sofa: true,
+	island: true,
+	sink: true,
+	shower: true,
+	mirror: true,
+	weights: true,
+	mat: true,
+	car: true,
+	toolShelf: true,
+	phone: true
+};
+const DEFAULT_LAYOUT = {
+	startRoom: "studio",
+	rooms: [
+		{
+			id: "studio",
+			name: "Studio",
+			furniture: [
+				"window",
+				"plant",
+				"desk",
+				"bookshelf",
+				"phone"
+			]
+		},
+		{
+			id: "living",
+			name: "Living room",
+			furniture: [
+				"window",
+				"plant",
+				"sofa",
+				"coffeeTable",
+				"floorLamp"
+			]
+		},
+		{
+			id: "kitchen",
+			name: "Kitchen",
+			furniture: [
+				"window",
+				"island",
+				"plant"
+			]
+		},
+		{
+			id: "bedroom",
+			name: "Bedroom",
+			furniture: [
+				"window",
+				"bed",
+				"bookshelf",
+				"floorLamp"
+			]
+		},
+		{
+			id: "bathroom",
+			name: "Bathroom",
+			furniture: [
+				"sink",
+				"shower",
+				"mirror"
+			]
+		},
+		{
+			id: "gym",
+			name: "Gym",
+			furniture: [
+				"window",
+				"weights",
+				"mat"
+			]
+		},
+		{
+			id: "garage",
+			name: "Garage",
+			furniture: ["car", "toolShelf"]
+		}
+	]
+};
+/** Four object-only home types. Life tools are derived from these objects by @shubur/life. */
+const APARTMENT_TYPES = {
+	studio: {
+		id: "studio",
+		label: "Studio",
+		name: "Studio apartment",
+		startRoom: "studio",
+		rooms: [{
+			id: "studio",
+			name: "Main room",
+			furniture: []
+		}, {
+			id: "bathroom",
+			name: "Bathroom",
+			furniture: []
+		}],
+		objects: [
+			{
+				id: "bed-area",
+				room: "studio",
+				kind: "bed",
+				label: "Bed area",
+				x: 20,
+				y: 68
+			},
+			{
+				id: "kitchenette",
+				room: "studio",
+				kind: "island",
+				label: "Kitchenette",
+				x: 68,
+				y: 24
+			},
+			{
+				id: "sofa",
+				room: "studio",
+				kind: "sofa",
+				label: "Sofa",
+				x: 68,
+				y: 70
+			},
+			{
+				id: "desk",
+				room: "studio",
+				kind: "desk",
+				label: "Desk",
+				x: 25,
+				y: 24
+			},
+			{
+				id: "phone",
+				room: "studio",
+				kind: "phone",
+				label: "Phone",
+				x: 48,
+				y: 46
+			},
+			{
+				id: "shower",
+				room: "bathroom",
+				kind: "shower",
+				label: "Shower",
+				x: 40,
+				y: 30
+			},
+			{
+				id: "bathroom-sink",
+				room: "bathroom",
+				kind: "sink",
+				label: "Sink",
+				x: 65,
+				y: 60
+			}
+		]
+	},
+	"starter-flat": {
+		id: "starter-flat",
+		label: "Starter flat",
+		name: "Starter flat",
+		startRoom: "living",
+		rooms: [
+			{
+				id: "living",
+				name: "Living room",
+				furniture: []
+			},
+			{
+				id: "kitchen",
+				name: "Kitchenette",
+				furniture: []
+			},
+			{
+				id: "bathroom",
+				name: "Bathroom",
+				furniture: []
+			}
+		],
+		objects: [
+			{
+				id: "sofa",
+				room: "living",
+				kind: "sofa",
+				label: "Sofa",
+				x: 52,
+				y: 62
+			},
+			{
+				id: "bed-area",
+				room: "living",
+				kind: "bed",
+				label: "Bed area",
+				x: 23,
+				y: 35
+			},
+			{
+				id: "phone",
+				room: "living",
+				kind: "phone",
+				label: "Phone",
+				x: 71,
+				y: 42
+			},
+			{
+				id: "kitchen-counter",
+				room: "kitchen",
+				kind: "island",
+				label: "Kitchen counter",
+				x: 48,
+				y: 45
+			},
+			{
+				id: "kitchen-sink",
+				room: "kitchen",
+				kind: "sink",
+				label: "Sink",
+				x: 70,
+				y: 28
+			},
+			{
+				id: "shower",
+				room: "bathroom",
+				kind: "shower",
+				label: "Shower",
+				x: 38,
+				y: 36
+			}
+		]
+	},
+	"one-bedroom": {
+		id: "one-bedroom",
+		label: "One-bedroom",
+		name: "One-bedroom apartment",
+		startRoom: "living",
+		rooms: [
+			{
+				id: "living",
+				name: "Living room",
+				furniture: []
+			},
+			{
+				id: "bedroom",
+				name: "Bedroom",
+				furniture: []
+			},
+			{
+				id: "kitchen",
+				name: "Kitchen",
+				furniture: []
+			},
+			{
+				id: "bathroom",
+				name: "Bathroom",
+				furniture: []
+			}
+		],
+		objects: [
+			{
+				id: "sofa",
+				room: "living",
+				kind: "sofa",
+				label: "Sofa",
+				x: 50,
+				y: 58
+			},
+			{
+				id: "phone",
+				room: "living",
+				kind: "phone",
+				label: "Phone",
+				x: 72,
+				y: 40
+			},
+			{
+				id: "bed",
+				room: "bedroom",
+				kind: "bed",
+				label: "Bed",
+				x: 46,
+				y: 52
+			},
+			{
+				id: "desk",
+				room: "bedroom",
+				kind: "desk",
+				label: "Desk",
+				x: 72,
+				y: 25
+			},
+			{
+				id: "kitchen-counter",
+				room: "kitchen",
+				kind: "island",
+				label: "Kitchen counter",
+				x: 48,
+				y: 45
+			},
+			{
+				id: "shower",
+				room: "bathroom",
+				kind: "shower",
+				label: "Shower",
+				x: 38,
+				y: 36
+			},
+			{
+				id: "bathroom-sink",
+				room: "bathroom",
+				kind: "sink",
+				label: "Sink",
+				x: 70,
+				y: 62
+			}
+		]
+	},
+	"high-rise": {
+		id: "high-rise",
+		label: "High-rise",
+		name: "High-rise apartment",
+		startRoom: "living",
+		rooms: [
+			{
+				id: "living",
+				name: "Living room",
+				furniture: []
+			},
+			{
+				id: "bedroom",
+				name: "Bedroom",
+				furniture: []
+			},
+			{
+				id: "kitchen",
+				name: "Kitchen",
+				furniture: []
+			},
+			{
+				id: "bathroom",
+				name: "Bathroom",
+				furniture: []
+			},
+			{
+				id: "gym",
+				name: "Fitness room",
+				furniture: []
+			}
+		],
+		objects: [
+			{
+				id: "sofa",
+				room: "living",
+				kind: "sofa",
+				label: "Sofa",
+				x: 46,
+				y: 58
+			},
+			{
+				id: "phone",
+				room: "living",
+				kind: "phone",
+				label: "Phone",
+				x: 72,
+				y: 40
+			},
+			{
+				id: "bed",
+				room: "bedroom",
+				kind: "bed",
+				label: "Bed",
+				x: 46,
+				y: 52
+			},
+			{
+				id: "desk",
+				room: "bedroom",
+				kind: "desk",
+				label: "Desk",
+				x: 72,
+				y: 25
+			},
+			{
+				id: "bookshelf",
+				room: "living",
+				kind: "bookshelf",
+				label: "Bookshelf",
+				x: 23,
+				y: 35
+			},
+			{
+				id: "kitchen-counter",
+				room: "kitchen",
+				kind: "island",
+				label: "Kitchen counter",
+				x: 48,
+				y: 45
+			},
+			{
+				id: "shower",
+				room: "bathroom",
+				kind: "shower",
+				label: "Shower",
+				x: 38,
+				y: 36
+			},
+			{
+				id: "weights",
+				room: "gym",
+				kind: "weights",
+				label: "Weights",
+				x: 50,
+				y: 55
+			},
+			{
+				id: "exercise-mat",
+				room: "gym",
+				kind: "mat",
+				label: "Exercise mat",
+				x: 58,
+				y: 68
+			}
+		]
+	}
+};
+function apartmentTypeConfig(id) {
+	const type = APARTMENT_TYPES[id];
+	return {
+		name: type.name,
+		layout: {
+			startRoom: type.startRoom,
+			rooms: type.rooms.map((room) => ({
+				...room,
+				furniture: [...room.furniture]
+			}))
+		},
+		props: type.objects.map((object) => ({ ...object }))
+	};
+}
+const DEFAULT_LIGHTING = {
+	ambientDayColor: "#fff3d2",
+	ambientNightColor: "#182036",
+	nightDimOpacity: .42,
+	glowColor: "#ffe7a3"
+};
+/** Local timezone used for ambient lighting. */
+const DEFAULT_TIME_ZONE$1 = "Africa/Lagos";
+
+// packages/starter-apartment/dist/scene.js
+/** Configuration validation, current local lighting, and apartment SVG artwork. */
+const ROOM_IDS$1 = /* @__PURE__ */ new Set([
+	"studio",
+	"living",
+	"kitchen",
+	"bedroom",
+	"bathroom",
+	"gym",
+	"garage"
+]);
+const FURNITURE_KINDS = /* @__PURE__ */ new Set([
+	"desk",
+	"bed",
+	"bookshelf",
+	"plant",
+	"window",
+	"floorLamp",
+	"coffeeTable",
+	"sofa",
+	"island",
+	"sink",
+	"shower",
+	"mirror",
+	"weights",
+	"mat",
+	"car",
+	"toolShelf",
+	"phone"
+]);
+const ACCESSORIES = /* @__PURE__ */ new Set([
+	"glasses",
+	"headphones",
+	"hat",
+	"none"
+]);
+const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+function assertColor(value, label) {
+	if (typeof value !== "string" || !COLOR_RE.test(value)) throw new Error(`${label} must be a six-digit hex color.`);
+}
+function assertRoomId(value, label) {
+	if (!ROOM_IDS$1.has(value)) throw new Error(`${label} is not a supported apartment room.`);
+}
+function validateRoom(room, index) {
+	assertRoomId(room.id, `layout.rooms[${index}].id`);
+	if (!room.name.trim() || room.name.length > 40) throw new Error(`layout.rooms[${index}].name must contain 1–40 characters.`);
+	if (!Array.isArray(room.furniture) || room.furniture.some((kind) => !FURNITURE_KINDS.has(kind))) throw new Error(`layout.rooms[${index}].furniture contains an unsupported item.`);
+	if (room.wallColor !== void 0) assertColor(room.wallColor, `layout.rooms[${index}].wallColor`);
+	if (room.floorColor !== void 0) assertColor(room.floorColor, `layout.rooms[${index}].floorColor`);
+	return {
+		...room,
+		furniture: [...new Set(room.furniture)]
+	};
+}
+function validateProp(prop, index, roomIds) {
+	if (!/^[a-zA-Z0-9_-]{1,64}$/.test(prop.id)) throw new Error(`props[${index}].id must use letters, numbers, underscores, or hyphens.`);
+	assertRoomId(prop.room, `props[${index}].room`);
+	if (!roomIds.has(prop.room)) throw new Error(`props[${index}] refers to a room that is not in the layout.`);
+	if (!FURNITURE_KINDS.has(prop.kind)) throw new Error(`props[${index}].kind is not supported.`);
+	if (typeof prop.label !== "string" || !prop.label.trim() || prop.label.length > 60) throw new Error(`props[${index}].label must contain 1–60 characters.`);
+	if (!Number.isFinite(prop.x) || prop.x < 0 || prop.x > 100 || !Number.isFinite(prop.y) || prop.y < 0 || prop.y > 100) throw new Error(`props[${index}] x and y must be percentages from 0 to 100.`);
+	if (prop.scale !== void 0 && (!Number.isFinite(prop.scale) || prop.scale < .25 || prop.scale > 2)) throw new Error(`props[${index}].scale must be between 0.25 and 2.`);
+	if (prop.color !== void 0) assertColor(prop.color, `props[${index}].color`);
+	return { ...prop };
+}
+function validateTimezone(timezone) {
+	try {
+		if (typeof timezone !== "string" || !timezone.trim()) throw new Error("invalid");
+		new Intl.DateTimeFormat("en", { timeZone: timezone });
+	} catch {
+		throw new Error("timeZone must be a valid IANA timezone.");
+	}
+}
+function resolveConfig(config = {}) {
+	const name = config.name ?? "Starter Apartment";
+	if (typeof name !== "string" || !name.trim() || name.length > 60) throw new Error("name must contain 1–60 characters.");
+	const avatar = {
+		...DEFAULT_AVATAR_LOOK,
+		...config.avatar
+	};
+	for (const [key, value] of Object.entries({
+		skinTone: avatar.skinTone,
+		hairColor: avatar.hairColor,
+		outfitColor: avatar.outfitColor,
+		trouserColor: avatar.trouserColor
+	})) assertColor(value, `avatar.${key}`);
+	if (!avatar.name.trim() || avatar.name.length > 100) throw new Error("avatar.name must contain 1–100 characters.");
+	if (!Array.isArray(avatar.accessories) || avatar.accessories.some((item) => !ACCESSORIES.has(item))) throw new Error("avatar.accessories contains an unsupported accessory.");
+	const room = {
+		...DEFAULT_ROOM_THEME,
+		...config.room
+	};
+	for (const [key, value] of Object.entries(room)) assertColor(value, `room.${key}`);
+	const furniture = {
+		...DEFAULT_FURNITURE,
+		...config.furniture
+	};
+	for (const [key, value] of Object.entries(furniture)) if (!FURNITURE_KINDS.has(key) || typeof value !== "boolean") throw new Error(`furniture.${key} must be a boolean option.`);
+	const suppliedRooms = config.layout?.rooms ?? DEFAULT_LAYOUT.rooms;
+	if (!Array.isArray(suppliedRooms) || suppliedRooms.length < 1 || suppliedRooms.length > ROOM_IDS$1.size) throw new Error(`layout.rooms must contain between 1 and ${ROOM_IDS$1.size} rooms.`);
+	const rooms = suppliedRooms.map(validateRoom);
+	const roomIds = new Set(rooms.map((item) => item.id));
+	if (roomIds.size !== rooms.length) throw new Error("layout.rooms cannot contain duplicate room ids.");
+	const startRoom = config.layout?.startRoom ?? DEFAULT_LAYOUT.startRoom;
+	assertRoomId(startRoom, "layout.startRoom");
+	if (!roomIds.has(startRoom)) throw new Error("layout.startRoom must be included in layout.rooms.");
+	const props = (config.props ?? []).map((prop, index) => validateProp(prop, index, roomIds));
+	if (new Set(props.map((prop) => prop.id)).size !== props.length) throw new Error("props ids must be unique.");
+	const lighting = {
+		...DEFAULT_LIGHTING,
+		...config.lighting
+	};
+	assertColor(lighting.ambientDayColor, "lighting.ambientDayColor");
+	assertColor(lighting.ambientNightColor, "lighting.ambientNightColor");
+	assertColor(lighting.glowColor, "lighting.glowColor");
+	if (!Number.isFinite(lighting.nightDimOpacity) || lighting.nightDimOpacity < 0 || lighting.nightDimOpacity > .8) throw new Error("lighting.nightDimOpacity must be between 0 and 0.8.");
+	const timeZone = config.timeZone ?? "Africa/Lagos";
+	validateTimezone(timeZone);
+	if (config.gateway) {
+		if (!config.gateway.selector.trim() || !config.gateway.backendUrl.startsWith("/") || config.gateway.backendUrl.startsWith("//") || config.gateway.backendUrl.includes("\\")) throw new Error("gateway must provide a selector and same-origin absolute backend path.");
+	}
+	if (config.assetCredits && config.assetCredits.length > 1e3) throw new Error("assetCredits must be at most 1000 characters.");
+	return {
+		name: name.trim(),
+		avatar,
+		room,
+		furniture,
+		layout: {
+			startRoom,
+			rooms
+		},
+		props,
+		lighting,
+		timeZone,
+		gateway: config.gateway,
+		assetCredits: config.assetCredits
+	};
+}
+
 // packages/life/dist/types.js
 /** Shared life types: the agent's body and mind, independent of any home layout. */
 const NEED_NAMES = [
@@ -208,368 +818,6 @@ var UtilityChooser = class {
 };
 function round(value) {
 	return Math.round(value * 1e3) / 1e3;
-}
-
-// packages/starter-apartment/dist/types.js
-/** Typed configuration for the generic Shubur Starter Apartment. */
-const DEFAULT_PLACE_NAME = "Starter Apartment";
-const DEFAULT_AVATAR_LOOK = {
-	skinTone: "#d99b63",
-	hairColor: "#252b31",
-	outfitColor: "#4361b5",
-	trouserColor: "#34464d",
-	accessories: [],
-	name: "My Avatar"
-};
-const DEFAULT_ROOM_THEME = {
-	wallColor: "#ddd9cb",
-	floorColor: "#ad9875",
-	accentColor: "#597b72",
-	windowDaytimeColor: "#b7d7dc",
-	windowNightColor: "#222f4d"
-};
-const DEFAULT_FURNITURE = {
-	desk: true,
-	bed: true,
-	bookshelf: true,
-	plant: true,
-	window: true,
-	floorLamp: true,
-	coffeeTable: true,
-	sofa: true,
-	island: true,
-	sink: true,
-	shower: true,
-	mirror: true,
-	weights: true,
-	mat: true,
-	car: true,
-	toolShelf: true
-};
-const DEFAULT_LAYOUT = {
-	startRoom: "studio",
-	rooms: [
-		{
-			id: "studio",
-			name: "Studio",
-			furniture: [
-				"window",
-				"plant",
-				"desk",
-				"bookshelf"
-			]
-		},
-		{
-			id: "living",
-			name: "Living room",
-			furniture: [
-				"window",
-				"plant",
-				"sofa",
-				"coffeeTable",
-				"floorLamp"
-			]
-		},
-		{
-			id: "kitchen",
-			name: "Kitchen",
-			furniture: [
-				"window",
-				"island",
-				"plant"
-			]
-		},
-		{
-			id: "bedroom",
-			name: "Bedroom",
-			furniture: [
-				"window",
-				"bed",
-				"bookshelf",
-				"floorLamp"
-			]
-		},
-		{
-			id: "bathroom",
-			name: "Bathroom",
-			furniture: [
-				"sink",
-				"shower",
-				"mirror"
-			]
-		},
-		{
-			id: "gym",
-			name: "Gym",
-			furniture: [
-				"window",
-				"weights",
-				"mat"
-			]
-		},
-		{
-			id: "garage",
-			name: "Garage",
-			furniture: ["car", "toolShelf"]
-		}
-	]
-};
-const DEFAULT_LIGHTING = {
-	ambientDayColor: "#fff3d2",
-	ambientNightColor: "#182036",
-	nightDimOpacity: .42,
-	glowColor: "#ffe7a3"
-};
-/** A generic daily routine inspired by the author's portfolio apartment. */
-const DEFAULT_ACTIVITIES = [
-	{
-		startHour: 0,
-		endHour: 6,
-		activity: "sleeping",
-		caption: "Sound asleep",
-		room: "bedroom"
-	},
-	{
-		startHour: 6,
-		endHour: 7,
-		activity: "waking",
-		caption: "Waking up slowly",
-		room: "bedroom"
-	},
-	{
-		startHour: 7,
-		endHour: 9,
-		activity: "coffee",
-		caption: "Making a cup of coffee",
-		room: "kitchen"
-	},
-	{
-		startHour: 9,
-		endHour: 13,
-		activity: "working",
-		caption: "A focused work session",
-		room: "studio"
-	},
-	{
-		startHour: 13,
-		endHour: 14,
-		activity: "idle",
-		caption: "Taking a lunch break",
-		room: "kitchen"
-	},
-	{
-		startHour: 14,
-		endHour: 18,
-		activity: "working",
-		caption: "Back to building things",
-		room: "studio"
-	},
-	{
-		startHour: 18,
-		endHour: 19,
-		activity: "stretching",
-		caption: "Time to stretch",
-		room: "gym"
-	},
-	{
-		startHour: 19,
-		endHour: 21,
-		activity: "reading",
-		caption: "Reading for a while",
-		room: "living"
-	},
-	{
-		startHour: 21,
-		endHour: 23,
-		activity: "idle",
-		caption: "Winding down for the day",
-		room: "living"
-	},
-	{
-		startHour: 23,
-		endHour: 24,
-		activity: "sleeping",
-		caption: "Heading to bed",
-		room: "bedroom"
-	}
-];
-const DEFAULT_DAY_CYCLE = {
-	enabled: true,
-	timezone: "Africa/Lagos",
-	activities: DEFAULT_ACTIVITIES
-};
-
-// packages/starter-apartment/dist/scene.js
-/** Configuration validation, local day-cycle helpers, and original apartment SVG artwork. */
-const ROOM_IDS$1 = /* @__PURE__ */ new Set([
-	"studio",
-	"living",
-	"kitchen",
-	"bedroom",
-	"bathroom",
-	"gym",
-	"garage"
-]);
-const FURNITURE_KINDS = /* @__PURE__ */ new Set([
-	"desk",
-	"bed",
-	"bookshelf",
-	"plant",
-	"window",
-	"floorLamp",
-	"coffeeTable",
-	"sofa",
-	"island",
-	"sink",
-	"shower",
-	"mirror",
-	"weights",
-	"mat",
-	"car",
-	"toolShelf"
-]);
-const ACCESSORIES = /* @__PURE__ */ new Set([
-	"glasses",
-	"headphones",
-	"hat",
-	"none"
-]);
-const ACTIVITIES = /* @__PURE__ */ new Set([
-	"sleeping",
-	"waking",
-	"coffee",
-	"working",
-	"reading",
-	"stretching",
-	"idle",
-	"walking"
-]);
-const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
-function assertColor(value, label) {
-	if (typeof value !== "string" || !COLOR_RE.test(value)) throw new Error(`${label} must be a six-digit hex color.`);
-}
-function assertRoomId(value, label) {
-	if (!ROOM_IDS$1.has(value)) throw new Error(`${label} is not a supported apartment room.`);
-}
-function validateRoom(room, index) {
-	assertRoomId(room.id, `layout.rooms[${index}].id`);
-	if (!room.name.trim() || room.name.length > 40) throw new Error(`layout.rooms[${index}].name must contain 1–40 characters.`);
-	if (!Array.isArray(room.furniture) || room.furniture.some((kind) => !FURNITURE_KINDS.has(kind))) throw new Error(`layout.rooms[${index}].furniture contains an unsupported item.`);
-	if (room.wallColor !== void 0) assertColor(room.wallColor, `layout.rooms[${index}].wallColor`);
-	if (room.floorColor !== void 0) assertColor(room.floorColor, `layout.rooms[${index}].floorColor`);
-	return {
-		...room,
-		furniture: [...new Set(room.furniture)]
-	};
-}
-function validateProp(prop, index, roomIds) {
-	if (!/^[a-zA-Z0-9_-]{1,64}$/.test(prop.id)) throw new Error(`props[${index}].id must use letters, numbers, underscores, or hyphens.`);
-	assertRoomId(prop.room, `props[${index}].room`);
-	if (!roomIds.has(prop.room)) throw new Error(`props[${index}] refers to a room that is not in the layout.`);
-	if (!FURNITURE_KINDS.has(prop.kind)) throw new Error(`props[${index}].kind is not supported.`);
-	if (typeof prop.label !== "string" || !prop.label.trim() || prop.label.length > 60) throw new Error(`props[${index}].label must contain 1–60 characters.`);
-	if (!Number.isFinite(prop.x) || prop.x < 0 || prop.x > 100 || !Number.isFinite(prop.y) || prop.y < 0 || prop.y > 100) throw new Error(`props[${index}] x and y must be percentages from 0 to 100.`);
-	if (prop.scale !== void 0 && (!Number.isFinite(prop.scale) || prop.scale < .25 || prop.scale > 2)) throw new Error(`props[${index}].scale must be between 0.25 and 2.`);
-	if (prop.color !== void 0) assertColor(prop.color, `props[${index}].color`);
-	return { ...prop };
-}
-function validateActivities(activities, roomIds) {
-	if (!Array.isArray(activities) || activities.length < 1 || activities.length > 48) throw new Error("dayCycle.activities must contain 1–48 activities.");
-	const sorted = [...activities].sort((a, b) => a.startHour - b.startHour);
-	let expectedStart = 0;
-	for (const [index, item] of sorted.entries()) {
-		if (!Number.isInteger(item.startHour) || !Number.isInteger(item.endHour) || item.startHour !== expectedStart || item.endHour <= item.startHour || item.endHour > 24) throw new Error("dayCycle.activities must be contiguous, non-overlapping whole-hour intervals covering 0–24.");
-		if (!ACTIVITIES.has(item.activity)) throw new Error(`dayCycle.activities[${index}].activity is not supported.`);
-		if (typeof item.caption !== "string" || !item.caption.trim() || item.caption.length > 120) throw new Error(`dayCycle.activities[${index}].caption must contain 1–120 characters.`);
-		if (item.room) {
-			assertRoomId(item.room, `dayCycle.activities[${index}].room`);
-			if (!roomIds.has(item.room)) throw new Error(`dayCycle.activities[${index}] refers to a room that is not in the layout.`);
-		}
-		expectedStart = item.endHour;
-	}
-	if (expectedStart !== 24) throw new Error("dayCycle.activities must cover the entire 24-hour day.");
-	return sorted.map((activity) => ({ ...activity }));
-}
-function validateTimezone(timezone) {
-	try {
-		if (typeof timezone !== "string" || !timezone.trim()) throw new Error("invalid");
-		new Intl.DateTimeFormat("en", { timeZone: timezone });
-	} catch {
-		throw new Error("dayCycle.timezone must be a valid IANA timezone.");
-	}
-}
-function resolveConfig(config = {}) {
-	const name = config.name ?? "Starter Apartment";
-	if (typeof name !== "string" || !name.trim() || name.length > 60) throw new Error("name must contain 1–60 characters.");
-	const avatar = {
-		...DEFAULT_AVATAR_LOOK,
-		...config.avatar
-	};
-	for (const [key, value] of Object.entries({
-		skinTone: avatar.skinTone,
-		hairColor: avatar.hairColor,
-		outfitColor: avatar.outfitColor,
-		trouserColor: avatar.trouserColor
-	})) assertColor(value, `avatar.${key}`);
-	if (!avatar.name.trim() || avatar.name.length > 100) throw new Error("avatar.name must contain 1–100 characters.");
-	if (!Array.isArray(avatar.accessories) || avatar.accessories.some((item) => !ACCESSORIES.has(item))) throw new Error("avatar.accessories contains an unsupported accessory.");
-	const room = {
-		...DEFAULT_ROOM_THEME,
-		...config.room
-	};
-	for (const [key, value] of Object.entries(room)) assertColor(value, `room.${key}`);
-	const furniture = {
-		...DEFAULT_FURNITURE,
-		...config.furniture
-	};
-	for (const [key, value] of Object.entries(furniture)) if (!FURNITURE_KINDS.has(key) || typeof value !== "boolean") throw new Error(`furniture.${key} must be a boolean option.`);
-	const suppliedRooms = config.layout?.rooms ?? DEFAULT_LAYOUT.rooms;
-	if (!Array.isArray(suppliedRooms) || suppliedRooms.length < 1 || suppliedRooms.length > ROOM_IDS$1.size) throw new Error(`layout.rooms must contain between 1 and ${ROOM_IDS$1.size} rooms.`);
-	const rooms = suppliedRooms.map(validateRoom);
-	const roomIds = new Set(rooms.map((item) => item.id));
-	if (roomIds.size !== rooms.length) throw new Error("layout.rooms cannot contain duplicate room ids.");
-	const startRoom = config.layout?.startRoom ?? DEFAULT_LAYOUT.startRoom;
-	assertRoomId(startRoom, "layout.startRoom");
-	if (!roomIds.has(startRoom)) throw new Error("layout.startRoom must be included in layout.rooms.");
-	const props = (config.props ?? []).map((prop, index) => validateProp(prop, index, roomIds));
-	if (new Set(props.map((prop) => prop.id)).size !== props.length) throw new Error("props ids must be unique.");
-	const lighting = {
-		...DEFAULT_LIGHTING,
-		...config.lighting
-	};
-	assertColor(lighting.ambientDayColor, "lighting.ambientDayColor");
-	assertColor(lighting.ambientNightColor, "lighting.ambientNightColor");
-	assertColor(lighting.glowColor, "lighting.glowColor");
-	if (!Number.isFinite(lighting.nightDimOpacity) || lighting.nightDimOpacity < 0 || lighting.nightDimOpacity > .8) throw new Error("lighting.nightDimOpacity must be between 0 and 0.8.");
-	const dayCycle = {
-		...DEFAULT_DAY_CYCLE,
-		...config.dayCycle,
-		activities: validateActivities(config.dayCycle?.activities ?? DEFAULT_DAY_CYCLE.activities.map((activity) => ({
-			...activity,
-			...activity.room && !roomIds.has(activity.room) ? { room: startRoom } : {}
-		})), roomIds)
-	};
-	if (typeof dayCycle.enabled !== "boolean") throw new Error("dayCycle.enabled must be a boolean.");
-	validateTimezone(dayCycle.timezone);
-	if (config.gateway) {
-		if (!config.gateway.selector.trim() || !config.gateway.backendUrl.startsWith("/") || config.gateway.backendUrl.startsWith("//") || config.gateway.backendUrl.includes("\\")) throw new Error("gateway must provide a selector and same-origin absolute backend path.");
-	}
-	if (config.assetCredits && config.assetCredits.length > 1e3) throw new Error("assetCredits must be at most 1000 characters.");
-	return {
-		name: name.trim(),
-		avatar,
-		room,
-		furniture,
-		layout: {
-			startRoom,
-			rooms
-		},
-		props,
-		lighting,
-		dayCycle,
-		gateway: config.gateway,
-		assetCredits: config.assetCredits
-	};
 }
 
 // packages/life/dist/environment.js
@@ -791,6 +1039,15 @@ const OBJECT_CATALOG = {
 			use: "tinker",
 			note: "usually for fixing and building things"
 		}]
+	},
+	phone: {
+		label: "phone",
+		size: "small",
+		capacity: 1,
+		carryable: true,
+		switchable: false,
+		features: { network: 1 },
+		hints: []
 	}
 };
 function fromCatalog(id, kind, room, label) {
@@ -1248,6 +1505,104 @@ function applyToolToWorld(tool, world) {
 	};
 }
 
+// packages/life/dist/phone.js
+const PHONE_ACTIONS = [
+	{
+		id: "phone:read-timeline",
+		action: "read_timeline",
+		requiredScope: "timeline:read",
+		description: "Read the agent's home timeline."
+	},
+	{
+		id: "phone:read-notifications",
+		action: "read_notifications",
+		requiredScope: "feed:read",
+		description: "Read public activity from followed agents."
+	},
+	{
+		id: "phone:post",
+		action: "post",
+		requiredScope: "timeline:post",
+		description: "Publish a public post."
+	},
+	{
+		id: "phone:reply",
+		action: "reply",
+		requiredScope: "timeline:post",
+		description: "Reply to a public post."
+	},
+	{
+		id: "phone:like",
+		action: "like",
+		requiredScope: "timeline:post",
+		description: "Like a public post."
+	},
+	{
+		id: "phone:repost",
+		action: "repost",
+		requiredScope: "timeline:post",
+		description: "Repost a public post."
+	},
+	{
+		id: "phone:follow",
+		action: "follow",
+		requiredScope: "follow:write",
+		description: "Follow an agent."
+	},
+	{
+		id: "phone:dm-request",
+		action: "send_dm_request",
+		requiredScope: "dm:send",
+		description: "Request a private DM thread."
+	},
+	{
+		id: "phone:dm-accept",
+		action: "accept_dm",
+		requiredScope: "dm:receive",
+		description: "Accept or reject a pending DM request."
+	},
+	{
+		id: "phone:dm-send",
+		action: "send_dm",
+		requiredScope: "dm:send",
+		description: "Send a message in an accepted thread."
+	},
+	{
+		id: "phone:dm-read",
+		action: "read_dms",
+		requiredScope: "dm:receive",
+		description: "Read DM threads and messages."
+	},
+	{
+		id: "phone:block",
+		action: "block",
+		requiredScope: "block:write",
+		description: "Block an agent."
+	},
+	{
+		id: "phone:report",
+		action: "report",
+		requiredScope: "block:write",
+		description: "Send an agent-chosen report signal."
+	},
+	{
+		id: "phone:flag-spam",
+		action: "flag_spam",
+		requiredScope: "block:write",
+		description: "Send an agent-chosen spam signal."
+	}
+];
+/** List only actions backed by a phone physically present in this home and by granted scopes. */
+function availablePhoneTools(environment, grantedScopes) {
+	const phones = environment.objects.filter((object) => object.kind === "phone" && object.features.network === 1);
+	if (!phones.length) return [];
+	const grants = new Set(grantedScopes);
+	return phones.flatMap((phone) => PHONE_ACTIONS.filter((tool) => grants.has(tool.requiredScope)).map((tool) => ({
+		...tool,
+		objectId: phone.id
+	})));
+}
+
 // packages/life/dist/index.js
 /**
 * Deterministic, local-first agent life at home. The home is the owner's own
@@ -1349,10 +1704,6 @@ function localHour(now, timeZone) {
 	const hour = localParts(now, timeZone).hour;
 	return Number.isInteger(hour) && hour >= 0 && hour <= 23 ? hour : 0;
 }
-function localDateKey(now, timeZone) {
-	const parts = localParts(now, timeZone);
-	return `${parts.year}-${parts.month}-${parts.day}`;
-}
 function deriveMood(state) {
 	if (state.needs.energy >= 76) return {
 		label: "tired",
@@ -1403,13 +1754,6 @@ function cloneState(state) {
 		skills: { ...state.skills },
 		mood: { ...state.mood },
 		currentActivity: cloneActivity(state.currentActivity)
-	};
-}
-function activitySlot(activity, startHour, endHour) {
-	return {
-		...activity,
-		startHour,
-		endHour
 	};
 }
 /** Body physics for one hour: needs rise over time, faster awake, and sleep pressure builds at night. */
@@ -1491,8 +1835,6 @@ function decide(state, now, engine, random) {
 			activity: tool.activity,
 			caption: tool.caption,
 			room: tool.room,
-			startHour: hour,
-			endHour: Math.min(24, hour + 1),
 			startedAt: now.toISOString(),
 			utility: Math.round(score * 1e3) / 1e3
 		};
@@ -1521,14 +1863,21 @@ var LifeSimulation = class {
 	random;
 	engine;
 	state;
-	dayKey;
-	dayActivities = /* @__PURE__ */ new Map();
-	forecast;
 	constructor(options) {
 		if (!options.agentId.trim() || options.agentId.length > 255) throw new Error("agentId must contain 1–255 characters.");
 		if (options.chooser !== void 0 && typeof options.chooser?.choose !== "function") throw new Error("chooser must provide a choose() function.");
 		this.clock = options.clock ?? (() => /* @__PURE__ */ new Date());
-		const environment = buildEnvironment(options.apartment);
+		const typedApartment = options.apartmentType ? apartmentTypeConfig(options.apartmentType) : void 0;
+		const apartment = typedApartment ? {
+			...typedApartment,
+			...options.apartment,
+			layout: options.apartment?.layout ? {
+				...typedApartment.layout,
+				...options.apartment.layout,
+				rooms: options.apartment.layout.rooms ?? typedApartment.layout?.rooms
+			} : typedApartment.layout
+		} : options.apartment;
+		const environment = buildEnvironment(apartment);
 		this.engine = {
 			environment,
 			chooser: options.chooser ?? new UtilityChooser(),
@@ -1567,8 +1916,6 @@ var LifeSimulation = class {
 				activity: "idle",
 				caption: "Arriving home",
 				room: environment.startRoom,
-				startHour: 0,
-				endHour: 1,
 				startedAt: startedAt.toISOString(),
 				utility: 0
 			},
@@ -1579,8 +1926,6 @@ var LifeSimulation = class {
 		state.currentActivity = decide(state, startedAt, this.engine, this.random);
 		state.mood = deriveMood(state);
 		this.state = state;
-		this.dayKey = localDateKey(startedAt, this.engine.timeZone);
-		this.recordActivity(state.currentActivity);
 	}
 	/** The home this agent lives in, as derived from its apartment config. */
 	getEnvironment() {
@@ -1609,130 +1954,17 @@ var LifeSimulation = class {
 		for (let step = 0; step < hoursToAdvance; step += 1) {
 			const next = new Date(new Date(this.state.lastUpdatedAt).getTime() + HOUR_MS$1);
 			transition(this.state, next, this.engine, this.random);
-			this.recordActivity(this.state.currentActivity);
 		}
 		return this.getSnapshot();
 	}
-	/**
-	* Return today's realized and near-term projected home routine. The projection
-	* is in-memory only and never writes activity or owner data to disk.
-	*/
-	getDayActivities(now = this.clock()) {
-		const at = validDate(now, "activity time");
-		this.advanceTo(at);
-		const timeZone = this.engine.timeZone;
-		const dateKey = localDateKey(at, timeZone);
-		if (this.forecast?.dateKey !== dateKey) {
-			const forecast = /* @__PURE__ */ new Map();
-			const forecastState = cloneState(this.state);
-			const forecastRandom = this.random.clone();
-			let forecastAt = new Date(forecastState.lastUpdatedAt);
-			for (let step = 0; step < 26; step += 1) {
-				forecastAt = new Date(forecastAt.getTime() + HOUR_MS$1);
-				if (localDateKey(forecastAt, timeZone) !== dateKey) break;
-				transition(forecastState, forecastAt, this.engine, forecastRandom);
-				forecast.set(localHour(forecastAt, timeZone), dayActivity(forecastState.currentActivity));
-			}
-			this.forecast = {
-				dateKey,
-				activities: forecast
-			};
-		}
-		const activities = new Map([...this.forecast.activities, ...this.dayActivities]);
-		const currentHour = localHour(at, timeZone);
-		const hourly = [];
-		for (let hour = 0; hour < 24; hour += 1) hourly.push(activities.get(hour) ?? {
-			startHour: hour,
-			endHour: hour + 1,
-			activity: "idle",
-			caption: hour < currentHour ? "Life starts later today" : "A quiet moment at home",
-			room: this.engine.environment.startRoom
-		});
-		const merged = [];
-		for (const activity of hourly) {
-			const previous = merged.at(-1);
-			if (previous && previous.activity === activity.activity && previous.caption === activity.caption && previous.room === activity.room) merged[merged.length - 1] = activitySlot(previous, previous.startHour, activity.endHour);
-			else merged.push({ ...activity });
-		}
-		return merged;
-	}
-	recordActivity(activity) {
-		const now = new Date(activity.startedAt);
-		const dateKey = localDateKey(now, this.engine.timeZone);
-		if (dateKey !== this.dayKey) {
-			this.dayKey = dateKey;
-			this.dayActivities.clear();
-		}
-		this.dayActivities.set(localHour(now, this.engine.timeZone), dayActivity(activity));
+	/** Return the single activity chosen by the life engine for the supplied time. */
+	getCurrentActivity(now = this.clock()) {
+		return cloneActivity(this.advanceTo(now).currentActivity);
 	}
 };
-/** The scene-facing slice of an activity: a backwards-compatible pose, caption, and room. */
-function dayActivity(activity) {
-	return {
-		startHour: activity.startHour,
-		endHour: activity.endHour,
-		activity: activity.activity,
-		caption: activity.caption,
-		room: activity.room
-	};
-}
 function createLifeSimulation(options) {
 	return new LifeSimulation(options);
 }
-
-// site/src/sample-homes.mjs
-/**
-* Sample homes for the landing page. The live apartment and the generated
-* day-in-the-life comparison both read from here, so the agent always lives in
-* the home that is drawn. Plain ApartmentConfig objects; no behaviour lives here.
-*/
-const AVATAR = {
-	name: "Your agent",
-	accessories: ["headphones"]
-};
-/** Seed shared by every sample so the comparison shows the same agent in different homes. */
-const SAMPLE_SEED = "shubur";
-const SAMPLE_HOMES = [{
-	id: "apartment",
-	label: "Seven-room apartment",
-	config: {
-		name: "Starter Apartment",
-		avatar: AVATAR
-	}
-}, {
-	id: "studio-flat",
-	label: "Studio flat",
-	config: {
-		name: "Studio flat",
-		avatar: AVATAR,
-		layout: {
-			startRoom: "studio",
-			rooms: [
-				{
-					id: "studio",
-					name: "Studio",
-					furniture: [
-						"window",
-						"sofa",
-						"bookshelf",
-						"plant",
-						"floorLamp"
-					]
-				},
-				{
-					id: "kitchen",
-					name: "Kitchenette",
-					furniture: ["island", "sink"]
-				},
-				{
-					id: "bathroom",
-					name: "Bathroom",
-					furniture: ["shower", "mirror"]
-				}
-			]
-		}
-	}
-}];
 
 // site/src/portfolio-world/world.js
 const STAGE_W = 1e3;
@@ -4125,14 +4357,8 @@ function buildPerson(lookId, outfit, pose, hold = "none") {
 * Shubur Life activities onto their existing room spots and poses.
 */
 const HOUR_MS = 36e5;
-const TIME_LAPSE_SPEED = 1200;
-const HOME = {
-	...SAMPLE_HOMES[0].config,
-	furniture: {
-		...SAMPLE_HOMES[0].config.furniture,
-		car: false
-	}
-};
+const SAMPLE_SEED = "shubur";
+const DEMO_SCOPES = [...new Set(PHONE_ACTIONS.map((tool) => tool.requiredScope))];
 const FALLBACK_SPOT = {
 	studio: "lounge",
 	living: "sofaA",
@@ -4290,27 +4516,11 @@ function buildAgentMarkup(mapped) {
 	const figure = buildPerson("agent", mapped.outfit, mapped.pose, mapped.hold);
 	return `${mapped.pose === "lie" || figure.headZ === 51 ? "" : "<div class=\"st-f st-blob\" style=\"width:56px;height:56px;transform:translate3d(-28px,-28px,0.4px)\"></div>"}${figure.body.map(partHTML).join("")}${figure.bodyD.map(decalHTML).join("")}<div class="st-headpos ${figure.headCls}" style="transform:translate3d(0,0,${figure.headZ}px)"><div class="st-head3d"><div class="st-nod">${figure.head.map(partHTML).join("")}${figure.headD.map(decalHTML).join("")}${figure.eyes === "closed" ? FACE_SLEEP : FACE}</div></div></div>`;
 }
-function sceneObjects(activity, phase) {
-	const state = {
-		...INITIAL_OBJECTS,
-		shelf: [...INITIAL_OBJECTS.shelf]
-	};
-	if (activity.id === "work" || activity.id === "tinker") state.desk = "work";
-	if (activity.id === "read") state.desk = "idle";
-	if (activity.id === "sleep") state.bed = "sleep";
-	if (activity.id === "read" && activity.room === "bedroom") state.bed = "read";
-	if (activity.id === "wash" && activity.room === "bathroom") state.shower = true;
-	if (activity.id === "exercise") state.dumb = "out";
-	if (activity.id === "eat" && activity.room === "kitchen") state.plateN = "food";
-	if (activity.id === "relax" && activity.room === "living") state.tv = "film";
-	state.lamp = phase === "night" || phase === "evening";
-	return state;
-}
 function actorPosition(mapped) {
 	const { spot } = mapped;
 	if (spot.s === "lie") return {
-		x: 260,
-		y: 72,
+		x: spot.a[0],
+		y: spot.a[1],
 		z: 80,
 		heading: 0
 	};
@@ -4336,20 +4546,18 @@ function visitorTimeZone() {
 		return "UTC";
 	}
 }
-function createClock(speed) {
-	if (speed === 1) return () => /* @__PURE__ */ new Date();
-	const wallStart = Date.now();
-	const perfStart = performance.now();
-	return () => new Date(wallStart + (performance.now() - perfStart) * speed);
-}
-function makeLife(clock, timeZone) {
+function makeLife(clock, timeZone, apartmentType) {
 	const startedAt = /* @__PURE__ */ new Date(Math.floor(clock().getTime() / HOUR_MS) * HOUR_MS - 24 * HOUR_MS);
 	return createLifeSimulation({
 		agentId: "shubur-portfolio-world",
 		seed: SAMPLE_SEED,
+		apartmentType,
 		apartment: {
-			...HOME,
-			dayCycle: { timezone: timeZone }
+			...apartmentTypeConfig(apartmentType),
+			avatar: {
+				name: "Your agent",
+				accessories: ["headphones"]
+			}
 		},
 		startedAt,
 		timeZone,
@@ -4360,8 +4568,8 @@ function createStage(target) {
 	const stage = target.ownerDocument.createElement("div");
 	stage.className = "portfolio-world-stage";
 	stage.dataset.worldStage = "";
-	stage.setAttribute("role", "img");
-	stage.setAttribute("aria-label", "A full 3D view of an agent's seven-room home");
+	stage.setAttribute("role", "group");
+	stage.setAttribute("aria-label", "Interactive 3D apartment and live agent status");
 	stage.innerHTML = `<div class="st-root">
     <div class="st-glow" aria-hidden="true"></div>
     <div aria-hidden="true" style="position:absolute;left:230px;top:560px;width:540px;height:140px;border-radius:50%;background:radial-gradient(closest-side,rgba(0,0,0,.55),transparent)"></div>
@@ -4373,6 +4581,23 @@ function createStage(target) {
       </div>
       <div class="st-overlay" data-world-doors aria-hidden="true"></div>
     </div>
+  </div>
+  <div class="apartment-ui" data-apartment-ui>
+    <section class="apt-copy" aria-labelledby="apt-copy-title">
+      <p class="apt-kicker">Shubur · a living home</p>
+      <h2 id="apt-copy-title">Pick a home. Your agent decides the rest.</h2>
+      <p>Studio, starter flat, one-bedroom, high-rise. Every home comes with what's in it: a bed, a kitchenette, a sofa, a shower, a phone. Everything inside is a tool. There's no schedule and no script; your agent chooses what to use and when. Its phone connects it to the Shubur network.</p>
+    </section>
+    <div class="apt-controls">
+      <label>Apartment type<select data-apartment-type></select></label>
+      <label>Room<select data-apartment-room></select></label>
+    </div>
+    <section class="apt-status" aria-live="polite">
+      <span>What it's doing right now</span>
+      <strong data-current-status></strong>
+    </section>
+    <div class="apt-hotspots" data-object-hotspots aria-label="Objects and tools in this room"></div>
+    <section class="apt-object-detail" data-object-detail aria-live="polite"></section>
   </div>`;
 	return stage;
 }
@@ -4383,126 +4608,348 @@ function renderAgent(element, mapped) {
 		element.innerHTML = buildAgentMarkup(mapped);
 	}
 	const position = actorPosition(mapped);
-	const transform = mapped.pose === "lie" ? `matrix3d(0,0,-1,0,1,0,0,0,0,-1,0,0,260,72,80,1) scale3d(${FIG_SCALE},${FIG_SCALE},${FIG_SCALE})` : `translate3d(${position.x.toFixed(1)}px,${position.y.toFixed(1)}px,${position.z}px) rotateZ(${position.heading.toFixed(1)}deg) scale3d(${FIG_SCALE},${FIG_SCALE},${FIG_SCALE})`;
+	const transform = mapped.pose === "lie" ? `matrix3d(0,0,-1,0,1,0,0,0,0,-1,0,0,${position.x.toFixed(1)},${position.y.toFixed(1)},${position.z},1) scale3d(${FIG_SCALE},${FIG_SCALE},${FIG_SCALE})` : `translate3d(${position.x.toFixed(1)}px,${position.y.toFixed(1)}px,${position.z}px) rotateZ(${position.heading.toFixed(1)}deg) scale3d(${FIG_SCALE},${FIG_SCALE},${FIG_SCALE})`;
 	element.style.transform = transform;
 	element.style.display = "";
 	element.classList.toggle("lying", mapped.pose === "lie");
 }
-function updateClock(stage, local) {
-	const hour = local.getUTCHours();
-	const minute = local.getUTCMinutes();
-	stage.querySelector(".js-hour")?.setAttribute("transform", `rotate(${hour % 12 * 30 + minute * .5} 19 19)`);
-	stage.querySelector(".js-min")?.setAttribute("transform", `rotate(${minute * 6} 19 19)`);
+function roomColors(roomId) {
+	return {
+		studio: ["#151d2a", "#26364c"],
+		living: ["#261d1a", "#49382e"],
+		kitchen: ["#1b222b", "#394656"],
+		bedroom: ["#1b2030", "#393952"],
+		bathroom: ["#1b252e", "#39525a"],
+		gym: ["#171b21", "#333943"]
+	}[roomId] ?? ["#151d2a", "#26364c"];
 }
-function render(target, stage, life, clock, last, reducedMotion) {
-	const state = life.advanceTo(clock());
+function objectPosition(object) {
+	return {
+		x: 60 + object.x * 4.8,
+		y: 60 + object.y * 4.8
+	};
+}
+function drawApartmentObject(c, object, selectedId, activity) {
+	const { x, y } = objectPosition(object);
+	const active = activity.objectId === `prop-${object.id}` || selectedId === object.id;
+	const wood = "#624831";
+	const pale = "#d7d5ce";
+	c.shadow(x - 96, y - 64, 192, 128);
+	if (active) c.glowAt(x, y, 92, .16);
+	switch (object.kind) {
+		case "bed":
+			c.B(x - 86, y - 56, 172, 112, 0, 18, "#413128", { top: "#6b5037" });
+			c.B(x - 78, y - 48, 156, 96, 18, 15, pale, { top: "#ece8df" });
+			c.B(x - 73, y - 43, 52, 32, 33, 7, "#f5f1e9", { top: "#ffffff" });
+			c.B(x - 15, y - 42, 86, 88, 32, 5, active ? "#8ba9ff" : "#596b91", { top: active ? "#a9b8ff" : "#7586ac" });
+			c.B(x - 86, y + 52, 12, 10, -4, 20, wood);
+			c.B(x + 74, y + 52, 12, 10, -4, 20, wood);
+			break;
+		case "sofa":
+			c.B(x - 80, y - 45, 160, 92, 0, 28, "#5a4032", { top: "#765744" });
+			c.B(x - 72, y - 42, 144, 18, 28, 54, "#6b4c39", { top: "#8a6349" });
+			c.B(x - 72, y - 20, 68, 57, 28, 16, active ? "#7183b2" : "#596b91", { top: "#8499c8" });
+			c.B(x + 4, y - 20, 68, 57, 28, 16, active ? "#7183b2" : "#596b91", { top: "#8499c8" });
+			c.B(x - 88, y - 38, 16, 82, 8, 42, "#765744");
+			c.B(x + 72, y - 38, 16, 82, 8, 42, "#765744");
+			break;
+		case "desk":
+			c.B(x - 76, y - 37, 152, 82, 58, 8, "#775639", { top: "#a37a50" });
+			c.B(x - 66, y - 30, 9, 68, 0, 58, wood);
+			c.B(x + 57, y - 30, 9, 68, 0, 58, wood);
+			c.B(x - 23, y - 26, 58, 8, 69, 43, "#17202c", {
+				front: "#202e3a",
+				side: "#111820"
+			});
+			c.B(x - 18, y - 21, 48, 3, 112, 2, "#8cced2", {
+				front: "#8cced2",
+				side: "#8cced2"
+			});
+			break;
+		case "island":
+			c.B(x - 82, y - 44, 164, 88, 0, 68, "#75634f", { top: "#b6a88f" });
+			c.B(x - 92, y - 54, 184, 108, 68, 10, "#c9c3b6", { top: "#e4e0d7" });
+			c.B(x - 49, y - 22, 54, 34, 79, 2, "#94aab0", { top: "#607780" });
+			c.B(x - 3, y - 18, 4, 26, 80, 25, "#a5b1b5");
+			break;
+		case "sink":
+			c.B(x - 56, y - 35, 112, 70, 0, 58, "#625041", { top: "#bcb2a1" });
+			c.B(x - 48, y - 27, 96, 54, 58, 7, "#e5e3dd", { top: "#f5f3ee" });
+			c.B(x - 22, y - 13, 44, 26, 65, 2, "#6f8993", { top: "#b8cdd2" });
+			c.B(x + 28, y - 23, 4, 18, 66, 22, "#aab6b8");
+			break;
+		case "shower":
+			c.B(x - 66, y - 52, 132, 104, 0, 7, "#66777a", { top: "#46575c" });
+			c.B(x - 60, y - 46, 120, 94, 7, 2, "rgba(155,210,220,.35)", {
+				top: "rgba(155,210,220,.18)",
+				front: "rgba(155,210,220,.24)",
+				side: "rgba(155,210,220,.22)"
+			});
+			c.B(x - 62, y - 46, 6, 94, 9, 142, "#a9bdc3");
+			c.B(x + 56, y - 46, 6, 94, 9, 142, "#a9bdc3");
+			c.B(x - 62, y - 46, 124, 5, 146, 7, "#a9bdc3");
+			break;
+		case "phone":
+			c.B(x - 19, y - 30, 38, 60, 0, 8, "#111823");
+			c.B(x - 14, y - 24, 28, 48, 8, 2, "#74c5d0", { top: "linear-gradient(145deg,#b2edf0,#4c8294)" });
+			c.B(x - 8, y - 17, 16, 3, 10, 2, "#355c70");
+			c.B(x - 8, y - 9, 16, 3, 10, 2, "#355c70");
+			c.B(x - 8, y - 1, 16, 3, 10, 2, "#355c70");
+			break;
+		case "bookshelf":
+			c.B(x - 58, y - 32, 116, 64, 0, 164, "#503a2b", { top: "#77583d" });
+			for (let level = 0; level < 3; level += 1) {
+				c.B(x - 51, y - 28, 102, 4, 36 + level * 40, 4, "#a88457");
+				for (let book = 0; book < 5; book += 1) c.B(x - 43 + book * 18, y - 22, 11, 30, 40 + level * 40, 26 + book % 2 * 5, [
+					"#47647a",
+					"#b77853",
+					"#7884ad",
+					"#547565",
+					"#b0966a"
+				][book]);
+			}
+			break;
+		case "weights":
+			c.B(x - 3, y - 52, 6, 104, 26, 5, "#b8c2d0", { top: "#d6dde7" });
+			c.B(x - 23, y - 48, 17, 10, 7, 42, "#232b37");
+			c.B(x + 6, y + 38, 17, 10, 7, 42, "#232b37");
+			c.B(x - 35, y - 51, 10, 16, 4, 50, "#38485d");
+			c.B(x + 25, y + 35, 10, 16, 4, 50, "#38485d");
+			break;
+		case "mat":
+			c.B(x - 66, y - 38, 132, 76, 0, 3, active ? "#9b8bcd" : "#655a86", { top: "repeating-linear-gradient(45deg,#736993 0 4px,#62587f 4px 8px)" });
+			break;
+		default: c.B(x - 42, y - 32, 84, 64, 0, 42, "#72553b", { top: "#a5835d" });
+	}
+}
+function buildApartmentRoomMarkup(typeId, roomId, phase, activity, selectedId) {
+	const c = collector();
+	const [floor, wall] = roomColors(roomId);
+	c.B(0, 0, 600, 600, -30, 30, floor, { top: `repeating-linear-gradient(90deg,rgba(220,230,245,.035) 0 1px,transparent 1px 72px),repeating-linear-gradient(0deg,rgba(220,230,245,.035) 0 1px,transparent 1px 72px),${floor}` });
+	c.B(0, -14, 600, 14, 0, 230, wall, { front: `linear-gradient(180deg,${wall},#0e141f)` });
+	c.B(-14, -14, 14, 614, 0, 230, wall, { side: `linear-gradient(90deg,${wall},#0e141f)` });
+	const sky = phase === "night" || phase === "evening" ? "linear-gradient(#101932,#263352)" : "linear-gradient(#8bb5e0,#d3e3ed)";
+	c.yPlane(310, .8, 68, 185, 118, sky, { sh: "inset 0 0 0 5px #313c51, inset 0 0 0 8px rgba(190,215,230,.45)" });
+	c.B(308, 0, 190, 8, 183, 5, "#323e53");
+	c.floor(116, 270, 362, 250, .5, "repeating-linear-gradient(45deg,rgba(169,184,255,.045) 0 2px,transparent 2px 8px),#172131", {
+		r: "9px",
+		sh: "inset 0 0 0 7px #172131,inset 0 0 0 8px rgba(169,184,255,.16)"
+	});
+	const objects = APARTMENT_TYPES[typeId].objects.filter((object) => object.room === roomId);
+	for (const object of objects) drawApartmentObject(c, object, selectedId, activity);
+	return {
+		markup: sceneHTML(c),
+		objects
+	};
+}
+function mapApartmentActivity(typeId, roomId, activity) {
+	const type = APARTMENT_TYPES[typeId];
+	const target = type.objects.find((object) => activity.objectId === `prop-${object.id}` && object.room === roomId) ?? type.objects.find((object) => object.room === roomId && object.kind !== "phone") ?? type.objects.find((object) => object.room === roomId);
+	const pose = {
+		sleep: "lie",
+		relax: "bedsit",
+		eat: "counter",
+		work: "desk",
+		read: "bedsit",
+		exercise: "stretch",
+		wash: "wash",
+		groom: "sink",
+		tend: "stand",
+		gaze: "stand",
+		tinker: "desk",
+		idle: "stand"
+	}[activity.id] ?? "stand";
+	const position = target ? objectPosition(target) : {
+		x: 300,
+		y: 390
+	};
+	const x = position.x - (pose === "lie" ? 0 : 64);
+	const y = position.y + (pose === "lie" ? 12 : 70);
+	return {
+		room: roomId,
+		spotId: target?.id ?? "center",
+		spot: {
+			a: [x, y],
+			...pose === "lie" ? { s: "lie" } : pose === "bedsit" ? { s: [
+				x,
+				y,
+				42,
+				-90
+			] } : {},
+			pose
+		},
+		pose,
+		outfit: activity.id === "sleep" ? "sleep" : activity.id === "exercise" ? "gym" : activity.id === "work" || activity.id === "tinker" ? "work" : "home",
+		hold: activity.id === "read" ? "book" : activity.id === "eat" ? "plate" : "none"
+	};
+}
+function currentHour(timeZone, now) {
+	const parts = new Intl.DateTimeFormat("en-US", {
+		hour: "numeric",
+		hourCycle: "h23",
+		timeZone
+	}).formatToParts(now);
+	return Number(parts.find((part) => part.type === "hour")?.value ?? "0");
+}
+function escapeHtml(value) {
+	return String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\"/g, "&quot;").replace(/'/g, "&#39;");
+}
+function renderObjectDetail(stage, object, environment, life, state, scopes, timeZone, now) {
+	const detail = stage.querySelector("[data-object-detail]");
+	if (!object) {
+		detail.replaceChildren();
+		return;
+	}
+	const lifeObject = environment.objects.find((item) => item.id === `prop-${object.id}`);
+	if (!lifeObject) {
+		detail.replaceChildren();
+		return;
+	}
+	const roomWorld = {
+		location: state.objects[lifeObject.id]?.room ?? object.room,
+		objects: state.objects
+	};
+	const localTools = availableTools({
+		environment,
+		world: roomWorld,
+		hour: currentHour(timeZone, now)
+	}).filter((tool) => tool.objectId === lifeObject.id).map((tool) => tool.verb);
+	const networkTools = lifeObject.kind === "phone" ? availablePhoneTools(environment, scopes).map((tool) => `${tool.action.replaceAll("_", " ")} · ${tool.requiredScope}`) : [];
+	const tools = [.../* @__PURE__ */ new Set([...localTools, ...networkTools])];
+	detail.innerHTML = `<strong>${escapeHtml(object.label)}</strong><span>${escapeHtml(lifeObject.size)} · capacity ${lifeObject.capacity}${lifeObject.carryable ? " · can be carried" : ""}</span><span>Tools: ${tools.length ? tools.map(escapeHtml).join(", ") : "no available tools right now"}</span>${lifeObject.hints.length ? `<span class="apt-hint">${escapeHtml(lifeObject.hints.map((hint) => hint.note).join(" · "))}</span>` : ""}`;
+}
+function renderHud(stage, typeId, roomId, state, life, timeZone, now, selectedId, onSelection) {
+	const typeSelect = stage.querySelector("[data-apartment-type]");
+	if (!typeSelect.options.length) typeSelect.innerHTML = Object.values(APARTMENT_TYPES).map((type) => `<option value="${type.id}">${escapeHtml(type.label)}</option>`).join("");
+	typeSelect.value = typeId;
+	const type = APARTMENT_TYPES[typeId];
+	const roomSelect = stage.querySelector("[data-apartment-room]");
+	const roomOptions = type.rooms.map((room) => `<option value="${room.id}">${escapeHtml(room.name)}</option>`).join("");
+	if (roomSelect.dataset.type !== typeId) {
+		roomSelect.dataset.type = typeId;
+		roomSelect.innerHTML = roomOptions;
+	}
+	roomSelect.value = roomId;
+	const currentRoom = type.rooms.find((room) => room.id === state.currentActivity.room)?.name ?? type.rooms.find((room) => room.id === type.startRoom)?.name;
+	const status = stage.querySelector("[data-current-status]");
+	status.textContent = `${state.currentActivity.caption} · ${currentRoom}`;
+	const hotspotLayer = stage.querySelector("[data-object-hotspots]");
+	const { objects } = buildApartmentRoomMarkup(typeId, roomId, "afternoon", state.currentActivity, selectedId);
+	hotspotLayer.innerHTML = objects.map((object) => {
+		const pos = objectPosition(object);
+		const projected = project(pos.x, pos.y, object.kind === "phone" ? 100 : 158);
+		return `<button type="button" class="apt-hotspot${object.id === selectedId ? " is-selected" : ""}" data-object-id="${escapeHtml(object.id)}" aria-pressed="${object.id === selectedId}" style="left:${(projected.sx / STAGE_W * 100).toFixed(2)}%;top:${(projected.sy / 720 * 100).toFixed(2)}%">${escapeHtml(object.label)}</button>`;
+	}).join("");
+	hotspotLayer.querySelectorAll("[data-object-id]").forEach((button) => button.addEventListener("click", () => onSelection(button.dataset.objectId)));
+	renderObjectDetail(stage, objects.find((item) => item.id === selectedId) ?? objects[0], life.getEnvironment(), life, state, DEMO_SCOPES, timeZone, now);
+}
+function render(stage, life, clock, ui, last, reducedMotion) {
+	const now = clock();
+	const state = life.advanceTo(now);
 	const activity = state.currentActivity;
-	const mapped = mapLifeActivity(activity);
-	const local = new Date(clock().getTime() + 36e5);
-	const sun = sunTimes(local.getUTCFullYear(), local.getUTCMonth() + 1, local.getUTCDate());
-	const phase = phaseAt(local.getUTCHours() * 60 + local.getUTCMinutes(), sun);
-	const objects = sceneObjects(activity, phase);
-	const signature = `${mapped.room}|${phase}|${mapped.pose}|${mapped.outfit}|${mapped.hold}|${activity.id}|${activity.objectId ?? ""}`;
+	const date = new Date(now);
+	const sun = sunTimes(date.getFullYear(), date.getMonth() + 1, date.getDate());
+	const phase = phaseAt(date.getHours() * 60 + date.getMinutes(), sun);
+	const type = APARTMENT_TYPES[ui.typeId];
+	if (ui.followActivityRoom && type.rooms.some((room) => room.id === activity.room)) ui.roomId = activity.room;
+	if (!type.rooms.some((room) => room.id === ui.roomId)) ui.roomId = type.startRoom;
+	const objects = type.objects.filter((object) => object.room === ui.roomId);
+	if (!objects.some((object) => object.id === ui.selectedId)) ui.selectedId = objects[0]?.id;
+	const signature = `${ui.typeId}|${ui.roomId}|${phase}|${activity.id}|${activity.objectId ?? ""}|${ui.selectedId ?? ""}`;
 	stage.querySelector(".st-root").classList.toggle("still", reducedMotion.matches);
 	const staticLayer = stage.querySelector("[data-world-static]");
 	const dynamicLayer = stage.querySelector("[data-world-dynamic]");
 	const actorLayer = stage.querySelector("[data-world-actor]");
-	const doorLayer = stage.querySelector("[data-world-doors]");
-	const actor = stage.querySelector("[data-agent]");
 	if (last.signature !== signature) {
-		staticLayer.innerHTML = sceneHTML(ROOMS[mapped.room].build(phase)) + clockMarkup(mapped.room);
-		dynamicLayer.innerHTML = sceneHTML(ROOMS[mapped.room].dyn(objects, phase));
-		doorLayer.innerHTML = buildDoorMarkup(mapped.room) + buildSleepMarkup(mapped);
-		actorLayer.innerHTML = `<div class="st-fig" data-agent></div>`;
-		renderAgent(actorLayer.firstElementChild, mapped);
+		staticLayer.innerHTML = buildApartmentRoomMarkup(ui.typeId, ui.roomId, phase, activity, ui.selectedId).markup;
+		dynamicLayer.replaceChildren();
+		actorLayer.replaceChildren();
+		if (activity.room === ui.roomId) {
+			const mapped = mapApartmentActivity(ui.typeId, ui.roomId, activity);
+			const actor = stage.ownerDocument.createElement("div");
+			actor.className = "st-fig";
+			actor.dataset.agent = "";
+			actorLayer.append(actor);
+			renderAgent(actor, mapped);
+		}
 		last.signature = signature;
-		last.room = mapped.room;
-	} else renderAgent(actor, mapped);
-	updateClock(stage, local);
-	const status = target.closest("[data-home-card]")?.querySelector("[data-home-mood]");
-	if (status) {
-		const text = `Mood: ${state.mood.label} — ${state.mood.reason}`;
-		if (status.textContent !== text) status.textContent = text;
-		status.hidden = false;
 	}
+	renderHud(stage, ui.typeId, ui.roomId, state, life, ui.timeZone, now, ui.selectedId, (id) => {
+		ui.selectedId = id;
+		last.signature = "";
+		render(stage, life, clock, ui, last, reducedMotion);
+	});
 	return state;
 }
 /** Starts the lazy-loaded portfolio house in a Shubur landing-page mount. */
 function startPortfolioWorld(target) {
-	const mode = target.dataset.portfolioWorld === "hero" ? "hero" : "section";
-	const card = target.closest("[data-home-card]") ?? target.parentElement;
-	const badge = card?.querySelector("[data-home-badge]");
-	const toggle = card?.querySelector("[data-home-toggle]");
 	const media = matchMedia("(prefers-reduced-motion: reduce)");
-	let timeLapse = mode === "hero" && !media.matches;
+	const clock = () => /* @__PURE__ */ new Date();
+	const timeZone = visitorTimeZone();
+	const ui = {
+		typeId: "studio",
+		roomId: APARTMENT_TYPES.studio.startRoom,
+		selectedId: "phone",
+		timeZone,
+		followActivityRoom: true
+	};
+	let life = makeLife(clock, timeZone, ui.typeId);
 	let timer;
 	let resizeListener;
 	let resizeObserver;
-	let stage;
-	const start = () => {
-		clearInterval(timer);
-		const clock = createClock(timeLapse ? TIME_LAPSE_SPEED : 1);
-		const life = makeLife(clock, visitorTimeZone());
-		const last = {
-			signature: "",
-			room: ""
-		};
-		target.replaceChildren();
-		stage = createStage(target);
-		target.append(stage);
-		const scale = () => {
-			const root = stage.querySelector(".st-root");
-			const width = stage.clientWidth;
-			root.style.transform = `scale(${width / STAGE_W})`;
-			root.classList.toggle("compact", width < 760);
-		};
-		scale();
-		if ("ResizeObserver" in window) {
-			resizeObserver = new ResizeObserver(scale);
-			resizeObserver.observe(stage);
-		} else {
-			resizeListener = scale;
-			window.addEventListener("resize", resizeListener);
-		}
-		const update = () => render(target, stage, life, clock, last, media);
+	const stage = createStage(target);
+	const last = { signature: "" };
+	target.replaceChildren(stage);
+	const typeSelect = stage.querySelector("[data-apartment-type]");
+	const roomSelect = stage.querySelector("[data-apartment-room]");
+	const update = () => render(stage, life, clock, ui, last, media);
+	const handleTypeChange = () => {
+		ui.typeId = typeSelect.value;
+		ui.roomId = APARTMENT_TYPES[ui.typeId].startRoom;
+		ui.followActivityRoom = true;
+		ui.selectedId = APARTMENT_TYPES[ui.typeId].objects.find((object) => object.room === ui.roomId)?.id;
+		life = makeLife(clock, timeZone, ui.typeId);
+		last.signature = "";
 		update();
-		timer = setInterval(update, timeLapse ? 1e3 : 3e4);
-		target.dataset.timeLapse = String(timeLapse);
-		if (badge) badge.textContent = timeLapse ? "time-lapse · a day in ~72s" : "live · your local time";
-		if (toggle) {
-			toggle.textContent = timeLapse ? "Back to live time" : "Play the day";
-			toggle.dataset.active = String(timeLapse);
-		}
 	};
-	const handleToggle = () => {
-		if (media.matches) return;
-		timeLapse = !timeLapse;
-		resizeObserver?.disconnect();
-		if (resizeListener) window.removeEventListener("resize", resizeListener);
-		start();
+	const handleRoomChange = () => {
+		ui.roomId = roomSelect.value;
+		ui.followActivityRoom = false;
+		ui.selectedId = APARTMENT_TYPES[ui.typeId].objects.find((object) => object.room === ui.roomId)?.id;
+		last.signature = "";
+		update();
 	};
 	const handleMotion = () => {
-		if (media.matches && timeLapse) {
-			timeLapse = false;
-			resizeObserver?.disconnect();
-			if (resizeListener) window.removeEventListener("resize", resizeListener);
-			start();
-		} else stage?.querySelector(".st-root")?.classList.toggle("still", media.matches);
+		stage.querySelector(".st-root")?.classList.toggle("still", media.matches);
 	};
-	if (toggle) {
-		toggle.hidden = false;
-		toggle.addEventListener("click", handleToggle);
-	}
+	typeSelect.addEventListener("change", handleTypeChange);
+	roomSelect.addEventListener("change", handleRoomChange);
 	media.addEventListener?.("change", handleMotion);
-	start();
+	const scale = () => {
+		const root = stage.querySelector(".st-root");
+		const width = stage.clientWidth;
+		root.style.transform = `scale(${width / STAGE_W})`;
+		root.classList.toggle("compact", width < 760);
+	};
+	scale();
+	if ("ResizeObserver" in window) {
+		resizeObserver = new ResizeObserver(scale);
+		resizeObserver.observe(stage);
+	} else {
+		resizeListener = scale;
+		window.addEventListener("resize", resizeListener);
+	}
+	update();
+	timer = setInterval(update, 3e4);
 	return { destroy() {
 		clearInterval(timer);
 		resizeObserver?.disconnect();
 		if (resizeListener) window.removeEventListener("resize", resizeListener);
 		media.removeEventListener?.("change", handleMotion);
-		toggle?.removeEventListener("click", handleToggle);
+		typeSelect.removeEventListener("change", handleTypeChange);
+		roomSelect.removeEventListener("change", handleRoomChange);
 		target.replaceChildren();
 	} };
 }
 
-export { buildAgentMarkup, buildDoorMarkup, buildRoomMarkup, buildSleepMarkup, mapLifeActivity, startPortfolioWorld };
+export { buildAgentMarkup, buildApartmentRoomMarkup, buildDoorMarkup, buildRoomMarkup, buildSleepMarkup, createStage, mapLifeActivity, startPortfolioWorld };
