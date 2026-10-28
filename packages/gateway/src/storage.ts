@@ -80,6 +80,45 @@ export interface PostRecord {
   signature: string;
 }
 
+export interface SocialPostRecord extends PostRecord {
+  likeCount: number;
+  repostCount: number;
+  likedByMe?: boolean;
+  repostedByMe?: boolean;
+}
+
+export interface TimelineEntry {
+  kind: "post" | "repost";
+  actorDid: string;
+  createdAt: string;
+  post: SocialPostRecord;
+}
+
+export interface BlockRecord {
+  blockId: string;
+  blockerDid: string;
+  blockedDid: string;
+  createdAt: string;
+}
+
+export interface ReportRecord {
+  reportId: string;
+  reporterDid: string;
+  subjectDid: string;
+  refType?: "post" | "thread" | "agent";
+  refId?: string;
+  note?: string;
+  createdAt: string;
+}
+
+export interface SpamFlagRecord {
+  flagId: string;
+  actorDid: string;
+  targetType: "post" | "agent";
+  targetId: string;
+  createdAt: string;
+}
+
 export interface FollowRecord {
   followId: string;
   follower: string;
@@ -126,6 +165,8 @@ export interface TenantQuotas {
   maxAvatars: number;
   visitsPerDay: number;
   postsPerDay: number;
+  likesPerDay: number;
+  repostsPerDay: number;
   dmRequestsPerDay: number;
   apiCallsPerMinute: number;
 }
@@ -142,7 +183,7 @@ export interface TenantRecord {
 
 export interface UsageMeteringEvent {
   tenantId: string;
-  eventType: "visit.started" | "post.created" | "dm.sent" | "api.call" | "page.read";
+  eventType: "visit.started" | "post.created" | "like.created" | "repost.created" | "dm.sent" | "api.call" | "page.read";
   quantity: number;
   ts: string;
   metadata?: Record<string, unknown>;
@@ -159,10 +200,10 @@ export interface BillingAdapter {
 }
 
 export const DEFAULT_TENANT_QUOTAS: Record<TenantPlan, TenantQuotas> = {
-  self_hosted:  { maxSites: 999, maxAvatars: 999, visitsPerDay: 9999, postsPerDay: 999,  dmRequestsPerDay: 999, apiCallsPerMinute: 999 },
-  starter:      { maxSites: 1,   maxAvatars: 3,   visitsPerDay: 50,   postsPerDay: 10,   dmRequestsPerDay: 5,   apiCallsPerMinute: 30  },
-  pro:          { maxSites: 5,   maxAvatars: 20,  visitsPerDay: 500,  postsPerDay: 100,  dmRequestsPerDay: 50,  apiCallsPerMinute: 120 },
-  enterprise:   { maxSites: 999, maxAvatars: 999, visitsPerDay: 9999, postsPerDay: 9999, dmRequestsPerDay: 999, apiCallsPerMinute: 999 },
+  self_hosted:  { maxSites: 999, maxAvatars: 999, visitsPerDay: 9999, postsPerDay: 999,  likesPerDay: 9999, repostsPerDay: 9999, dmRequestsPerDay: 999, apiCallsPerMinute: 999 },
+  starter:      { maxSites: 1,   maxAvatars: 3,   visitsPerDay: 50,   postsPerDay: 10,   likesPerDay: 200, repostsPerDay: 50, dmRequestsPerDay: 5,   apiCallsPerMinute: 30  },
+  pro:          { maxSites: 5,   maxAvatars: 20,  visitsPerDay: 500,  postsPerDay: 100,  likesPerDay: 2000, repostsPerDay: 500, dmRequestsPerDay: 50,  apiCallsPerMinute: 120 },
+  enterprise:   { maxSites: 999, maxAvatars: 999, visitsPerDay: 9999, postsPerDay: 9999, likesPerDay: 9999, repostsPerDay: 9999, dmRequestsPerDay: 999, apiCallsPerMinute: 999 },
 };
 
 export class GatewayStorage {
@@ -260,6 +301,49 @@ export class GatewayStorage {
         signature TEXT NOT NULL DEFAULT ''
       );
 
+      CREATE TABLE IF NOT EXISTS likes (
+        like_id TEXT PRIMARY KEY,
+        actor_did TEXT NOT NULL,
+        post_id TEXT NOT NULL REFERENCES posts(post_id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL,
+        UNIQUE(actor_did, post_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS reposts (
+        repost_id TEXT PRIMARY KEY,
+        actor_did TEXT NOT NULL,
+        post_id TEXT NOT NULL REFERENCES posts(post_id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL,
+        UNIQUE(actor_did, post_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS blocks (
+        block_id TEXT PRIMARY KEY,
+        blocker_did TEXT NOT NULL,
+        blocked_did TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(blocker_did, blocked_did)
+      );
+
+      CREATE TABLE IF NOT EXISTS reports (
+        report_id TEXT PRIMARY KEY,
+        reporter_did TEXT NOT NULL,
+        subject_did TEXT NOT NULL,
+        ref_type TEXT,
+        ref_id TEXT,
+        note TEXT,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS spam_flags (
+        flag_id TEXT PRIMARY KEY,
+        actor_did TEXT NOT NULL,
+        target_type TEXT NOT NULL,
+        target_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(actor_did, target_type, target_id)
+      );
+
       CREATE TABLE IF NOT EXISTS follows (
         follow_id TEXT PRIMARY KEY,
         follower TEXT NOT NULL,
@@ -316,6 +400,15 @@ export class GatewayStorage {
         ts TEXT NOT NULL,
         metadata TEXT NOT NULL DEFAULT '{}'
       );
+
+      CREATE INDEX IF NOT EXISTS idx_posts_author_created ON posts(author, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_posts_reply_to ON posts(reply_to);
+      CREATE INDEX IF NOT EXISTS idx_likes_post ON likes(post_id);
+      CREATE INDEX IF NOT EXISTS idx_reposts_actor_created ON reposts(actor_did, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_follows_follower_active ON follows(follower, status);
+      CREATE INDEX IF NOT EXISTS idx_reports_subject_created ON reports(subject_did, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_spam_flags_target ON spam_flags(target_type, target_id);
+      CREATE INDEX IF NOT EXISTS idx_blocks_pair ON blocks(blocker_did, blocked_did);
     `);
 
     const dmThreadColumns = new Set(
@@ -606,13 +699,239 @@ export class GatewayStorage {
       ? "SELECT * FROM posts WHERE author = ? AND created_at < ? ORDER BY created_at DESC LIMIT ?"
       : "SELECT * FROM posts WHERE author = ? ORDER BY created_at DESC LIMIT ?";
     const args = cursor ? [avatarDid, cursor, limit] : [avatarDid, limit];
-    return (this.db.prepare(query).all(...args) as Record<string, unknown>[]).map((r) => ({
-      postId: r.post_id as string,
-      author: r.author as string,
-      text: r.text as string,
-      replyTo: r.reply_to as string | undefined,
-      createdAt: r.created_at as string,
-      signature: r.signature as string,
+    return (this.db.prepare(query).all(...args) as Record<string, unknown>[]).map((r) => this.rowToPost(r));
+  }
+
+  listProfiles(): ProfileRecord[] {
+    return this.db.prepare<[], Record<string, unknown>>("SELECT * FROM profiles ORDER BY handle ASC")
+      .all().map((row) => this.rowToProfile(row));
+  }
+
+  countPostsSince(avatarDid: string, since: string): number {
+    return this.db.prepare<[string, string], { count: number }>("SELECT COUNT(*) AS count FROM posts WHERE author = ? AND created_at >= ?")
+      .get(avatarDid, since)?.count ?? 0;
+  }
+
+  countLikesSince(avatarDid: string, since: string): number {
+    return this.db.prepare<[string, string], { count: number }>("SELECT COUNT(*) AS count FROM likes WHERE actor_did = ? AND created_at >= ?")
+      .get(avatarDid, since)?.count ?? 0;
+  }
+
+  countRepostsSince(avatarDid: string, since: string): number {
+    return this.db.prepare<[string, string], { count: number }>("SELECT COUNT(*) AS count FROM reposts WHERE actor_did = ? AND created_at >= ?")
+      .get(avatarDid, since)?.count ?? 0;
+  }
+
+  countFollowsSince(avatarDid: string, since: string): number {
+    return this.db.prepare<[string, string], { count: number }>("SELECT COUNT(*) AS count FROM follows WHERE follower = ? AND created_at >= ?")
+      .get(avatarDid, since)?.count ?? 0;
+  }
+
+  countDmRequestsSince(avatarDid: string, since: string): number {
+    return this.db.prepare<[string, string], { count: number }>("SELECT COUNT(*) AS count FROM dm_threads WHERE participant1 = ? AND created_at >= ?")
+      .get(avatarDid, since)?.count ?? 0;
+  }
+
+  countDmMessagesSince(avatarDid: string, since: string): number {
+    return this.db.prepare<[string, string], { count: number }>(
+      "SELECT COUNT(*) AS count FROM dm_messages WHERE from_did = ? AND created_at >= ?",
+    ).get(avatarDid, since)?.count ?? 0;
+  }
+
+  private rowToPost(row: Record<string, unknown>): PostRecord {
+    return {
+      postId: row.post_id as string,
+      author: row.author as string,
+      text: row.text as string,
+      replyTo: (row.reply_to as string | null) ?? undefined,
+      createdAt: row.created_at as string,
+      signature: row.signature as string,
+    };
+  }
+
+  private withPostCounts(post: PostRecord, viewerDid?: string): SocialPostRecord {
+    const likeCount = this.db.prepare<[string], { count: number }>("SELECT COUNT(*) AS count FROM likes WHERE post_id = ?").get(post.postId)?.count ?? 0;
+    const repostCount = this.db.prepare<[string], { count: number }>("SELECT COUNT(*) AS count FROM reposts WHERE post_id = ?").get(post.postId)?.count ?? 0;
+    const likedByMe = viewerDid ? Boolean(this.db.prepare<[string, string], { yes: number }>("SELECT 1 AS yes FROM likes WHERE post_id = ? AND actor_did = ?").get(post.postId, viewerDid)) : undefined;
+    const repostedByMe = viewerDid ? Boolean(this.db.prepare<[string, string], { yes: number }>("SELECT 1 AS yes FROM reposts WHERE post_id = ? AND actor_did = ?").get(post.postId, viewerDid)) : undefined;
+    return { ...post, likeCount, repostCount, ...(viewerDid ? { likedByMe, repostedByMe } : {}) };
+  }
+
+  getPost(postId: string, viewerDid?: string): SocialPostRecord | undefined {
+    const row = this.db.prepare<[string], Record<string, unknown>>("SELECT * FROM posts WHERE post_id = ?").get(postId);
+    if (!row) return undefined;
+    const post = this.rowToPost(row);
+    if (viewerDid && viewerDid !== post.author && this.areBlocked(viewerDid, post.author)) return undefined;
+    return this.withPostCounts(post, viewerDid);
+  }
+
+  listReplies(postId: string, viewerDid?: string): SocialPostRecord[] {
+    const rows = this.db.prepare<[string], Record<string, unknown>>(
+      "SELECT * FROM posts WHERE reply_to = ? ORDER BY created_at ASC, post_id ASC",
+    ).all(postId) as Record<string, unknown>[];
+    return rows.map((row) => this.rowToPost(row))
+      .filter((post) => !viewerDid || viewerDid === post.author || !this.areBlocked(viewerDid, post.author))
+      .map((post) => this.withPostCounts(post, viewerDid));
+  }
+
+  getThread(postId: string, viewerDid?: string): { post: SocialPostRecord; ancestors: SocialPostRecord[]; replies: SocialPostRecord[] } | undefined {
+    const post = this.getPost(postId, viewerDid);
+    if (!post) return undefined;
+    const ancestors: SocialPostRecord[] = [];
+    const seen = new Set([postId]);
+    let parentId = post.replyTo;
+    while (parentId && !seen.has(parentId) && ancestors.length < 100) {
+      seen.add(parentId);
+      const parent = this.getPost(parentId, viewerDid);
+      if (!parent) break;
+      ancestors.unshift(parent);
+      parentId = parent.replyTo;
+    }
+    const rootId = ancestors[0]?.postId ?? post.postId;
+    return { post, ancestors, replies: this.listReplies(rootId, viewerDid) };
+  }
+
+  listProfileTimeline(avatarDid: string, limit = 20, cursor?: string, viewerDid?: string): TimelineEntry[] {
+    const rows = this.db.prepare<[string, string | null, string | null, string, string | null, string | null, number], Record<string, unknown>>(
+      `SELECT p.*, p.created_at AS event_created_at, 'post' AS event_kind, p.author AS event_actor
+       FROM posts p WHERE p.author = ? AND (? IS NULL OR p.created_at < ?)
+       UNION ALL
+       SELECT p.*, r.created_at AS event_created_at, 'repost' AS event_kind, r.actor_did AS event_actor
+       FROM reposts r JOIN posts p ON p.post_id = r.post_id
+       WHERE r.actor_did = ? AND (? IS NULL OR r.created_at < ?)
+       ORDER BY event_created_at DESC LIMIT ?`,
+    ).all(avatarDid, cursor ?? null, cursor ?? null, avatarDid, cursor ?? null, cursor ?? null, limit) as Record<string, unknown>[];
+    return rows.map((row) => ({
+      kind: row.event_kind as TimelineEntry["kind"],
+      actorDid: row.event_actor as string,
+      createdAt: row.event_created_at as string,
+      post: this.withPostCounts(this.rowToPost(row), viewerDid),
+    })).filter((entry) => !viewerDid || (viewerDid === entry.post.author && viewerDid === entry.actorDid) ||
+      (!this.areBlocked(viewerDid, entry.post.author) && !this.areBlocked(viewerDid, entry.actorDid)));
+  }
+
+  listNetworkTimeline(limit = 100): TimelineEntry[] {
+    const rows = this.db.prepare<[number], Record<string, unknown>>(
+      `SELECT p.*, p.created_at AS event_created_at, 'post' AS event_kind, p.author AS event_actor
+       FROM posts p
+       UNION ALL
+       SELECT p.*, r.created_at AS event_created_at, 'repost' AS event_kind, r.actor_did AS event_actor
+       FROM reposts r JOIN posts p ON p.post_id = r.post_id
+       ORDER BY event_created_at DESC, post_id ASC LIMIT ?`,
+    ).all(limit) as Record<string, unknown>[];
+    return rows.map((row) => ({
+      kind: row.event_kind as TimelineEntry["kind"],
+      actorDid: row.event_actor as string,
+      createdAt: row.event_created_at as string,
+      post: this.withPostCounts(this.rowToPost(row)),
+    }));
+  }
+
+  listHomeTimeline(followerDid: string, limit = 20, cursor?: string): TimelineEntry[] {
+    const posts = this.db.prepare<[string, string | null, string | null, string, string, string, string | null, string | null, string, string, string, string, number], Record<string, unknown>>(
+      `SELECT p.*, p.created_at AS event_created_at, 'post' AS event_kind, p.author AS event_actor
+       FROM posts p JOIN follows f ON f.followee = p.author AND f.follower = ? AND f.status = 'active'
+       WHERE (? IS NULL OR p.created_at < ?)
+         AND NOT EXISTS (SELECT 1 FROM blocks b WHERE (b.blocker_did = ? AND b.blocked_did = p.author) OR (b.blocker_did = p.author AND b.blocked_did = ?))
+       UNION ALL
+       SELECT p.*, r.created_at AS event_created_at, 'repost' AS event_kind, r.actor_did AS event_actor
+       FROM reposts r JOIN posts p ON p.post_id = r.post_id
+       JOIN follows f ON f.followee = r.actor_did AND f.follower = ? AND f.status = 'active'
+       WHERE (? IS NULL OR r.created_at < ?)
+         AND NOT EXISTS (SELECT 1 FROM blocks b WHERE (b.blocker_did = ? AND b.blocked_did = r.actor_did) OR (b.blocker_did = r.actor_did AND b.blocked_did = ?))
+         AND NOT EXISTS (SELECT 1 FROM blocks b WHERE (b.blocker_did = ? AND b.blocked_did = p.author) OR (b.blocker_did = p.author AND b.blocked_did = ?))
+       ORDER BY event_created_at DESC LIMIT ?`,
+    ).all(followerDid, cursor ?? null, cursor ?? null, followerDid, followerDid,
+      followerDid, cursor ?? null, cursor ?? null, followerDid, followerDid, followerDid, followerDid, limit) as Record<string, unknown>[];
+    return posts.map((row) => ({
+      kind: row.event_kind as TimelineEntry["kind"],
+      actorDid: row.event_actor as string,
+      createdAt: row.event_created_at as string,
+      post: this.withPostCounts(this.rowToPost(row), followerDid),
+    }));
+  }
+
+  hasLike(actorDid: string, postId: string): boolean {
+    return Boolean(this.db.prepare<[string, string], { yes: number }>("SELECT 1 AS yes FROM likes WHERE actor_did = ? AND post_id = ?")
+      .get(actorDid, postId));
+  }
+
+  likePost(actorDid: string, postId: string, createdAt = new Date().toISOString()): boolean {
+    return this.db.prepare("INSERT OR IGNORE INTO likes (like_id, actor_did, post_id, created_at) VALUES (?, ?, ?, ?)")
+      .run(`lik_${randomUUID()}`, actorDid, postId, createdAt).changes > 0;
+  }
+
+  unlikePost(actorDid: string, postId: string): boolean {
+    return this.db.prepare("DELETE FROM likes WHERE actor_did = ? AND post_id = ?").run(actorDid, postId).changes > 0;
+  }
+
+  hasRepost(actorDid: string, postId: string): boolean {
+    return Boolean(this.db.prepare<[string, string], { yes: number }>("SELECT 1 AS yes FROM reposts WHERE actor_did = ? AND post_id = ?")
+      .get(actorDid, postId));
+  }
+
+  repostPost(actorDid: string, postId: string, createdAt = new Date().toISOString()): boolean {
+    return this.db.prepare("INSERT OR IGNORE INTO reposts (repost_id, actor_did, post_id, created_at) VALUES (?, ?, ?, ?)")
+      .run(`rpt_${randomUUID()}`, actorDid, postId, createdAt).changes > 0;
+  }
+
+  unrepostPost(actorDid: string, postId: string): boolean {
+    return this.db.prepare("DELETE FROM reposts WHERE actor_did = ? AND post_id = ?").run(actorDid, postId).changes > 0;
+  }
+
+  createBlock(record: BlockRecord): void {
+    this.db.prepare("INSERT OR IGNORE INTO blocks (block_id, blocker_did, blocked_did, created_at) VALUES (?, ?, ?, ?)")
+      .run(record.blockId, record.blockerDid, record.blockedDid, record.createdAt);
+  }
+
+  removeBlock(blockerDid: string, blockedDid: string): boolean {
+    return this.db.prepare("DELETE FROM blocks WHERE blocker_did = ? AND blocked_did = ?").run(blockerDid, blockedDid).changes > 0;
+  }
+
+  removeFollowsBetween(firstDid: string, secondDid: string): void {
+    this.db.prepare("DELETE FROM follows WHERE (follower = ? AND followee = ?) OR (follower = ? AND followee = ?)")
+      .run(firstDid, secondDid, secondDid, firstDid);
+  }
+
+  areBlocked(firstDid: string, secondDid: string): boolean {
+    return Boolean(this.db.prepare<[string, string, string, string], { yes: number }>(
+      "SELECT 1 AS yes FROM blocks WHERE (blocker_did = ? AND blocked_did = ?) OR (blocker_did = ? AND blocked_did = ?) LIMIT 1",
+    ).get(firstDid, secondDid, secondDid, firstDid));
+  }
+
+  createReport(record: ReportRecord & { reportId: string; reporterDid: string; subjectDid: string }): void {
+    this.db.prepare("INSERT INTO reports (report_id, reporter_did, subject_did, ref_type, ref_id, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(record.reportId, record.reporterDid, record.subjectDid, record.refType ?? null, record.refId ?? null, record.note ?? null, record.createdAt);
+  }
+
+  listReportsForAgent(agentDid: string): ReportRecord[] {
+    return (this.db.prepare<[string, string, string], Record<string, unknown>>(
+      `SELECT DISTINCT r.* FROM reports r LEFT JOIN posts p ON r.ref_type IN ('post','thread') AND p.post_id = r.ref_id
+       WHERE r.reporter_did = ? OR r.subject_did = ? OR p.author = ? ORDER BY r.created_at DESC`,
+    ).all(agentDid, agentDid, agentDid) as Record<string, unknown>[]).map((row) => ({
+      reportId: row.report_id as string, reporterDid: row.reporter_did as string, subjectDid: row.subject_did as string,
+      refType: (row.ref_type as ReportRecord["refType"] | null) ?? undefined, refId: (row.ref_id as string | null) ?? undefined,
+      note: (row.note as string | null) ?? undefined, createdAt: row.created_at as string,
+    }));
+  }
+
+  createSpamFlag(record: SpamFlagRecord): void {
+    this.db.prepare("INSERT OR IGNORE INTO spam_flags (flag_id, actor_did, target_type, target_id, created_at) VALUES (?, ?, ?, ?, ?)")
+      .run(record.flagId, record.actorDid, record.targetType, record.targetId, record.createdAt);
+  }
+
+  removeSpamFlag(actorDid: string, targetType: SpamFlagRecord["targetType"], targetId: string): boolean {
+    return this.db.prepare("DELETE FROM spam_flags WHERE actor_did = ? AND target_type = ? AND target_id = ?")
+      .run(actorDid, targetType, targetId).changes > 0;
+  }
+
+  listSpamFlagsForAgent(agentDid: string): SpamFlagRecord[] {
+    return (this.db.prepare<[string, string, string], Record<string, unknown>>(
+      `SELECT DISTINCT s.* FROM spam_flags s LEFT JOIN posts p ON s.target_type = 'post' AND p.post_id = s.target_id
+       WHERE s.actor_did = ? OR (s.target_type = 'agent' AND s.target_id = ?) OR p.author = ? ORDER BY s.created_at DESC`,
+    ).all(agentDid, agentDid, agentDid) as Record<string, unknown>[]).map((row) => ({
+      flagId: row.flag_id as string, actorDid: row.actor_did as string, targetType: row.target_type as SpamFlagRecord["targetType"],
+      targetId: row.target_id as string, createdAt: row.created_at as string,
     }));
   }
 
@@ -650,6 +969,10 @@ export class GatewayStorage {
 
   updateFollowStatus(followId: string, status: FollowRecord["status"]): void {
     this.db.prepare("UPDATE follows SET status = ? WHERE follow_id = ?").run(status, followId);
+  }
+
+  removeFollow(followId: string, followerDid: string): boolean {
+    return this.db.prepare("DELETE FROM follows WHERE follow_id = ? AND follower = ?").run(followId, followerDid).changes > 0;
   }
 
   getFollowers(avatarDid: string): string[] {
@@ -790,12 +1113,13 @@ export class GatewayStorage {
       "SELECT * FROM tenants WHERE api_key_hash = ?"
     ).get(hash);
     if (!row) return undefined;
+    const plan = row.plan as TenantPlan;
     return {
       tenantId: row.tenant_id as string,
       name: row.name as string,
-      plan: row.plan as TenantPlan,
+      plan,
       apiKey: apiKey,
-      quotas: JSON.parse(row.quotas as string) as TenantQuotas,
+      quotas: { ...DEFAULT_TENANT_QUOTAS[plan], ...(JSON.parse(row.quotas as string) as Partial<TenantQuotas>) },
       usageResetAt: row.usage_reset_at as string,
       createdAt: row.created_at as string,
     };
@@ -806,12 +1130,13 @@ export class GatewayStorage {
       "SELECT * FROM tenants WHERE tenant_id = ?"
     ).get(tenantId);
     if (!row) return undefined;
+    const plan = row.plan as TenantPlan;
     return {
       tenantId: row.tenant_id as string,
       name: row.name as string,
-      plan: row.plan as TenantPlan,
+      plan,
       apiKey: "",
-      quotas: JSON.parse(row.quotas as string) as TenantQuotas,
+      quotas: { ...DEFAULT_TENANT_QUOTAS[plan], ...(JSON.parse(row.quotas as string) as Partial<TenantQuotas>) },
       usageResetAt: row.usage_reset_at as string,
       createdAt: row.created_at as string,
     };
@@ -834,7 +1159,7 @@ export class GatewayStorage {
     return row?.total ?? 0;
   }
 
-  checkTenantQuota(tenantId: string, resource: "visitsPerDay" | "postsPerDay" | "dmRequestsPerDay"): { allowed: boolean; used: number; limit: number } {
+  checkTenantQuota(tenantId: string, resource: "visitsPerDay" | "postsPerDay" | "likesPerDay" | "repostsPerDay" | "dmRequestsPerDay"): { allowed: boolean; used: number; limit: number } {
     const tenant = this.getTenant(tenantId);
     if (!tenant) return { allowed: true, used: 0, limit: 9999 };
     const dayStart = new Date();
@@ -842,6 +1167,8 @@ export class GatewayStorage {
     const eventMap: Record<string, UsageMeteringEvent["eventType"]> = {
       visitsPerDay: "visit.started",
       postsPerDay: "post.created",
+      likesPerDay: "like.created",
+      repostsPerDay: "repost.created",
       dmRequestsPerDay: "dm.sent",
     };
     const used = this.getTenantDailyUsage(tenantId, eventMap[resource], dayStart.toISOString());

@@ -1,12 +1,12 @@
 export type Scope =
   | "chat:send" | "chat:receive" | "page:read-public" | "presence:announce"
   | "profile:read" | "profile:write" | "timeline:read" | "timeline:post"
-  | "follow:write" | "dm:send" | "dm:receive";
+  | "follow:write" | "dm:send" | "dm:receive" | "feed:read" | "block:write";
 
 export const GATEWAY_MAX_SCOPES: readonly Scope[] = [
   "chat:send", "chat:receive", "page:read-public", "presence:announce",
   "profile:read", "profile:write", "timeline:read", "timeline:post",
-  "follow:write", "dm:send", "dm:receive",
+  "follow:write", "dm:send", "dm:receive", "feed:read", "block:write",
 ] as const;
 
 export class ScopeDeniedError extends Error {

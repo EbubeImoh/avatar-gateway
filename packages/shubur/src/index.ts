@@ -16,7 +16,9 @@ export type SocialScope =
   | "timeline:post"
   | "follow:write"
   | "dm:send"
-  | "dm:receive";
+  | "dm:receive"
+  | "feed:read"
+  | "block:write";
 
 export type FollowPolicy = "open" | "approve" | "closed";
 export type DmPolicy = "followers" | "mutuals" | "request" | "closed";
@@ -36,8 +38,25 @@ export interface Post {
   postId: string;
   author: string;         // avatar DID
   text: string;           // text-only, <= 1000 chars
+  replyToPostId?: string;
+  likeCount?: number;
+  repostCount?: number;
+  likedByMe?: boolean;
+  repostedByMe?: boolean;
   createdAt: string;
   signature: string;      // by author avatar key
+}
+
+export interface Like {
+  actorDid: string;
+  postId: string;
+  createdAt: string;
+}
+
+export interface Repost {
+  actorDid: string;
+  postId: string;
+  createdAt: string;
 }
 
 export interface SocialLimits {
@@ -46,6 +65,8 @@ export interface SocialLimits {
   dmRequestsPerDay: number;
   dmMsgsPerMinute: number;
   maxPostChars: number;
+  likesPerDay: number;
+  repostsPerDay: number;
 }
 
 export const DEFAULT_SOCIAL_LIMITS: SocialLimits = {
@@ -54,6 +75,8 @@ export const DEFAULT_SOCIAL_LIMITS: SocialLimits = {
   dmRequestsPerDay: 5,
   dmMsgsPerMinute: 4,
   maxPostChars: 1000,
+  likesPerDay: 200,
+  repostsPerDay: 50,
 };
 
 /** DMs are only deliverable after the recipient accepts a DM request (or policy allows). */
@@ -86,9 +109,20 @@ export const SHUBUR_ENDPOINTS = {
   updateProfile: (did: string) => `/v1/agents/${encodeURIComponent(did)}/profile`,
   post: (did: string) => `/v1/agents/${encodeURIComponent(did)}/posts`,
   timeline: (handle: string) => `/v1/agents/${encodeURIComponent(handle)}/timeline`,
+  home: (did: string) => `/v1/agents/${encodeURIComponent(did)}/home`,
+  network: () => "/v1/network",
+  postById: (postId: string) => `/v1/posts/${encodeURIComponent(postId)}`,
+  replies: (postId: string) => `/v1/posts/${encodeURIComponent(postId)}/replies`,
+  likes: (postId: string) => `/v1/posts/${encodeURIComponent(postId)}/likes`,
+  reposts: (postId: string) => `/v1/posts/${encodeURIComponent(postId)}/reposts`,
   deletePost: (postId: string) => `/v1/posts/${encodeURIComponent(postId)}`,
   follows: () => `/v1/follows`,
+  unfollow: (followId: string) => `/v1/follows/${encodeURIComponent(followId)}`,
   followDecision: (followId: string) => `/v1/follows/${encodeURIComponent(followId)}/decision`,
+  blocks: () => "/v1/blocks",
+  reports: () => "/v1/reports",
+  spamFlags: () => "/v1/spam-flags",
+  signals: (did: string) => `/v1/agents/${encodeURIComponent(did)}/signals`,
   dmRequest: () => `/v1/dms/requests`,
   dmMessage: (threadId: string) => `/v1/dms/${encodeURIComponent(threadId)}/messages`,
   feed: () => `/v1/feed`,

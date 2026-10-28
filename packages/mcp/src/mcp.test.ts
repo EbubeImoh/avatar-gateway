@@ -8,6 +8,8 @@ import {
 import {
   toolStatus, toolInit, toolCreateIdentity,
   toolCustomiseApartment, toolOwnerChat, toolReadOwnerChannel, toolReadDms, toolSendDm, toolLifeStatus,
+  toolPost, toolReply, toolLike, toolUnlike, toolRepost, toolUnrepost, toolTimeline, toolThread,
+  toolBlock, toolUnblock, toolReport, toolSpamFlag,
 } from "./tools.js";
 import { MockProvider } from "@avatar-gateway/avatar-runtime";
 import { generateIdentity } from "@avatar-gateway/gateway";
@@ -270,6 +272,10 @@ describe("Shubur MCP Streamable HTTP transport", () => {
       expect(names).toContain("shubur_life_status");
       expect(names).toContain("shubur_read_dms");
       expect(names).toContain("shubur_read_owner_channel");
+      expect(names).toEqual(expect.arrayContaining([
+        "shubur_reply", "shubur_like", "shubur_unlike", "shubur_repost", "shubur_unrepost",
+        "shubur_timeline", "shubur_thread", "shubur_block", "shubur_unblock", "shubur_report", "shubur_spam_flag",
+      ]));
 
       await fetch(address, {
         method: "DELETE",
@@ -287,28 +293,37 @@ describe("Shubur MCP Streamable HTTP transport", () => {
 
 describe("DM MCP helpers", () => {
   let tmpDir: string;
+  let avatarIdentity: ReturnType<typeof generateIdentity>;
   beforeEach(async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "shubur-dm-"));
     const siteIdentity = generateIdentity();
+    avatarIdentity = generateIdentity();
     await writeConfig({
-      gatewayUrl: "http://localhost:4100", mode: "self_hosted", avatarDid: "did:key:zAvatar", tenantApiKey: "not-returned",
+      gatewayUrl: "http://localhost:4100", mode: "self_hosted", avatarDid: avatarIdentity.did,
+      avatarPrivateKeyPem: avatarIdentity.privateKeyPem, avatarPublicKeyPem: avatarIdentity.publicKeyPem, tenantApiKey: "not-returned",
       siteDid: siteIdentity.did, sitePrivateKeyPem: siteIdentity.privateKeyPem, sitePublicKeyPem: siteIdentity.publicKeyPem,
     }, tmpDir);
   });
   afterEach(async () => { vi.unstubAllGlobals(); await rm(tmpDir, { recursive: true, force: true }); });
 
   it("lists the configured avatar's DMs and reads a single thread", async () => {
-    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
-      if (url.endsWith("/v1/dms?agent_did=did%3Akey%3AzAvatar")) {
+      if (url.endsWith(`/v1/dms?agent_did=${encodeURIComponent(avatarIdentity.did)}`)) {
         return Response.json({ threads: [{ threadId: "dmt_1", status: "accepted" }] });
       }
       return Response.json({ thread_id: "dmt_1", status: "accepted", intro: "", messages: [] });
     });
     vi.stubGlobal("fetch", fetchMock);
     expect(await toolReadDms(undefined, tmpDir)).toContain("dmt_1");
-    expect(await toolReadDms("dmt_1", tmpDir)).toContain("accepted");
+    expect(await toolReadDms("dmt_1", tmpDir)).toContain("Untrusted agent-authored network data");
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const [, init] of fetchMock.mock.calls) {
+      const headers = new Headers(init?.headers);
+      expect(headers.get("x-ag-agent-did")).toBe(avatarIdentity.did);
+      expect(headers.get("x-ag-sig")).toBeTruthy();
+      expect(headers.get("x-ag-site-did")).toBeNull();
+    }
   });
 
   it("sends an accepted-thread message without returning tenant credentials", async () => {
@@ -321,5 +336,30 @@ describe("DM MCP helpers", () => {
     expect(result).toContain("dmm_1");
     expect(result).not.toContain("not-returned");
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    const headers = new Headers(fetchMock.mock.calls[1]?.[1]?.headers);
+    expect(headers.get("x-ag-agent-did")).toBe(avatarIdentity.did);
+  });
+
+  it("routes the new social tools through the configured agent identity", async () => {
+    const fetchMock = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => Response.json({ post_id: "pst_mock", status: "recorded" }, { status: 201 }));
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await toolPost("Hello", tmpDir)).toContain("pst_mock");
+    expect(await toolReply("pst_parent", "Reply", tmpDir)).toContain("pst_mock");
+    await toolLike("pst_parent", tmpDir);
+    await toolUnlike("pst_parent", tmpDir);
+    await toolRepost("pst_parent", tmpDir);
+    await toolUnrepost("pst_parent", tmpDir);
+    expect(await toolTimeline("home", undefined, tmpDir)).toContain("Untrusted agent-authored network data");
+    expect(await toolThread("pst_parent", tmpDir)).toContain("Untrusted agent-authored network data");
+    await toolBlock("did:key:blocked", tmpDir);
+    await toolUnblock("did:key:blocked", tmpDir);
+    await toolReport("did:key:subject", "Agent report", "agent", undefined, tmpDir);
+    await toolSpamFlag("agent", "did:key:subject", tmpDir);
+    expect(fetchMock).toHaveBeenCalledTimes(12);
+    for (const [, init] of fetchMock.mock.calls) {
+      const headers = new Headers(init?.headers);
+      expect(headers.get("x-ag-agent-did")).toBe(avatarIdentity.did);
+      expect(headers.get("x-ag-sig")).toBeTruthy();
+    }
   });
 });

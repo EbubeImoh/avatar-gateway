@@ -37,6 +37,35 @@ async function post(path: string, body: unknown, privateKeyPem?: string, extraHe
   return { status: res.status, data: await res.json() };
 }
 
+async function send(method: string, path: string, body?: unknown, privateKeyPem?: string, extraHeaders: Record<string, string> = {}): Promise<{ status: number; data: unknown }> {
+  const bodyText = body === undefined ? "" : JSON.stringify(body);
+  const headers: Record<string, string> = { ...(body === undefined ? {} : { "Content-Type": "application/json" }), ...extraHeaders };
+  if (privateKeyPem) {
+    Object.assign(headers, signGatewayRequest(method, path, bodyText, privateKeyPem));
+    const publicKey = createPublicKey(privateKeyPem).export({ format: "pem", type: "spki" }).toString();
+    headers["x-ag-site-did"] = didKeyFromPublicKey(publicKey);
+  }
+  const res = await fetch(`${baseUrl}${path}`, { method, headers, ...(body === undefined ? {} : { body: bodyText }) });
+  return { status: res.status, data: await res.json() };
+}
+
+async function sendAgent(method: string, path: string, body: unknown | undefined, agent: ReturnType<typeof generateIdentity>): Promise<{ status: number; data: unknown }> {
+  const bodyText = body === undefined ? "" : JSON.stringify(body);
+  const headers = { ...(body === undefined ? {} : { "Content-Type": "application/json" }), ...signGatewayRequest(method, path, bodyText, agent.privateKeyPem), "x-ag-agent-did": agent.did };
+  const res = await fetch(`${baseUrl}${path}`, { method, headers, ...(body === undefined ? {} : { body: bodyText }) });
+  return { status: res.status, data: await res.json() };
+}
+
+async function postAgent(path: string, body: unknown, agent: ReturnType<typeof generateIdentity>): Promise<{ status: number; data: unknown }> {
+  return sendAgent("POST", path, body, agent);
+}
+
+async function getAgent(path: string, agent: ReturnType<typeof generateIdentity>): Promise<{ status: number; data: unknown }> {
+  const headers = { ...signGatewayRequest("GET", path, "", agent.privateKeyPem), "x-ag-agent-did": agent.did };
+  const res = await fetch(`${baseUrl}${path}`, { headers });
+  return { status: res.status, data: await res.json() };
+}
+
 async function get(path: string, privateKeyPem?: string, extraHeaders: Record<string, string> = {}): Promise<{ status: number; data: unknown }> {
   const headers = { ...extraHeaders };
   if (privateKeyPem) {
@@ -378,13 +407,11 @@ describe("Gateway HTTP server", () => {
     expect((profile.data as Record<string, unknown>).is_ai).toBe(true);
 
     // Post
-    const unsignedPost = await post(`/v1/agents/${avatarA.did}/posts`, {
-      text: "Unsigned post", nonce: "n0", ts: new Date().toISOString(),
-    });
+    const unsignedPost = await post(`/v1/agents/${avatarA.did}/posts`, { text: "Unsigned post" });
     expect(unsignedPost.status).toBe(401);
-    const postRes = await post(`/v1/agents/${avatarA.did}/posts`, {
-      text: "Hello from Bot A!", nonce: "n", ts: new Date().toISOString(),
-    }, siteA.privateKeyPem);
+    const ownerPost = await post(`/v1/agents/${avatarA.did}/posts`, { text: "Owner post" }, siteA.privateKeyPem);
+    expect(ownerPost.status).toBe(403);
+    const postRes = await postAgent(`/v1/agents/${avatarA.did}/posts`, { text: "Hello from Bot A!" }, avatarA);
     expect(postRes.status).toBe(201);
 
     // Timeline
@@ -393,10 +420,7 @@ describe("Gateway HTTP server", () => {
     expect((timeline.data as { posts: unknown[] }).posts.length).toBeGreaterThan(0);
 
     // Follow
-    const follow = await post("/v1/follows", {
-      follower: avatarA.did, followee: avatarB.did,
-      nonce: "n2", ts: new Date().toISOString(),
-    }, siteA.privateKeyPem);
+    const follow = await postAgent("/v1/follows", { follower: avatarA.did, followee: avatarB.did }, avatarA);
     expect(follow.status).toBe(201);
 
     // Activity feed
@@ -406,10 +430,11 @@ describe("Gateway HTTP server", () => {
   });
 
   it("handles DM requests and messages", async () => {
-    const dmReq = await post("/v1/dms/requests", {
-      from: avatarA.did, to: avatarB.did,
-      intro: "Hi! Want to chat?", nonce: "n3", ts: new Date().toISOString(),
-    }, siteA.privateKeyPem);
+    const ownerDmRequest = await post("/v1/dms/requests", { from: avatarA.did, to: avatarB.did }, siteA.privateKeyPem);
+    expect(ownerDmRequest.status).toBe(403);
+    const dmReq = await postAgent("/v1/dms/requests", {
+      from: avatarA.did, to: avatarB.did, intro: "Hi! Want to chat?",
+    }, avatarA);
     expect(dmReq.status).toBe(202);
     const requestData = dmReq.data as Record<string, unknown>;
     const threadId = requestData.thread_id as string;
@@ -418,31 +443,111 @@ describe("Gateway HTTP server", () => {
 
     const inboxPath = `/v1/dms?agent_did=${encodeURIComponent(avatarB.did)}`;
     expect((await get(inboxPath)).status).toBe(401);
-    const inbox = await get(inboxPath, siteB.privateKeyPem);
+    const ownerInbox = await get(inboxPath, siteB.privateKeyPem);
+    expect(ownerInbox.status).toBe(401);
+    const inbox = await getAgent(inboxPath, avatarB);
     expect(inbox.status).toBe(200);
     expect((inbox.data as { threads: Array<{ intro: string }> }).threads[0].intro).toBe("Hi! Want to chat?");
 
     const outsiderRead = await get(`/v1/dms/${threadId}/messages?agent_did=${encodeURIComponent(avatarA.did)}-outsider`);
     expect(outsiderRead.status).toBe(403);
 
-    const premature = await post(`/v1/dms/${threadId}/messages`, {
-      from: avatarA.did, text: "Hello!", seq: 1, nonce: "n4", ts: new Date().toISOString(),
-    }, siteA.privateKeyPem);
+    const premature = await postAgent(`/v1/dms/${threadId}/messages`, { from: avatarA.did, text: "Hello!", seq: 1 }, avatarA);
     expect(premature.status).toBe(403);
 
-    const wrongDecision = await post(`/v1/dms/${threadId}/decision`, { agent_did: avatarA.did, decision: "accept" }, siteA.privateKeyPem);
+    const wrongDecision = await postAgent(`/v1/dms/${threadId}/decision`, { agent_did: avatarA.did, decision: "accept" }, avatarA);
     expect(wrongDecision.status).toBe(403);
-    const accept = await post(`/v1/dms/${threadId}/decision`, { agent_did: avatarB.did, decision: "accept" }, siteB.privateKeyPem);
+    const accept = await postAgent(`/v1/dms/${threadId}/decision`, { agent_did: avatarB.did, decision: "accept" }, avatarB);
     expect(accept.status).toBe(200);
 
-    const msg = await post(`/v1/dms/${threadId}/messages`, {
-      from: avatarA.did, text: "Hello!", seq: 1,
-      nonce: "n4", ts: new Date().toISOString(),
-    }, siteA.privateKeyPem);
+    const msg = await postAgent(`/v1/dms/${threadId}/messages`, { from: avatarA.did, text: "Hello!", seq: 1 }, avatarA);
     expect(msg.status).toBe(202);
 
-    const messages = await get(`/v1/dms/${threadId}/messages?agent_did=${encodeURIComponent(avatarB.did)}`, siteB.privateKeyPem);
+    const messages = await getAgent(`/v1/dms/${threadId}/messages?agent_did=${encodeURIComponent(avatarB.did)}`, avatarB);
     expect(messages.status).toBe(200);
     expect((messages.data as { messages: Array<{ text: string }> }).messages[0].text).toBe("Hello!");
+  });
+
+  it("requires agent signatures for every social write and denies site-owner writes with 403", async () => {
+    const agentPost = await postAgent(`/v1/agents/${avatarA.did}/posts`, { text: "Auth boundary test post" }, avatarA);
+    expect(agentPost.status).toBe(201);
+    const postId = (agentPost.data as { post_id: string }).post_id;
+    const ownerAttempts: Array<[string, string, unknown?]> = [
+      ["PUT", `/v1/agents/${avatarA.did}/profile`, { public_bio: "Owner edit" }],
+      ["POST", `/v1/agents/${avatarA.did}/posts`, { text: "Owner post" }],
+      ["DELETE", `/v1/posts/${postId}?author=${encodeURIComponent(avatarA.did)}`],
+      ["POST", `/v1/posts/${postId}/replies`, { text: "Owner reply" }],
+      ["POST", `/v1/posts/${postId}/likes`, {}],
+      ["DELETE", `/v1/posts/${postId}/likes`, {}],
+      ["POST", `/v1/posts/${postId}/reposts`, {}],
+      ["DELETE", `/v1/posts/${postId}/reposts`, {}],
+      ["POST", "/v1/follows", { follower: avatarA.did, followee: avatarB.did }],
+      ["DELETE", "/v1/follows/fol_missing", { follower: avatarA.did }],
+      ["POST", "/v1/follows/fol_missing/decision", { decision: "accept" }],
+      ["POST", "/v1/blocks", { blocker_did: avatarA.did, blocked_did: avatarB.did }],
+      ["DELETE", "/v1/blocks", { blocker_did: avatarA.did, blocked_did: avatarB.did }],
+      ["POST", "/v1/reports", { reporter_did: avatarA.did, subject_did: avatarB.did }],
+      ["POST", "/v1/spam-flags", { agent_did: avatarA.did, target_type: "agent", target_id: avatarB.did }],
+      ["DELETE", "/v1/spam-flags", { agent_did: avatarA.did, target_type: "agent", target_id: avatarB.did }],
+      ["POST", "/v1/dms/requests", { from: avatarA.did, to: avatarB.did }],
+      ["POST", "/v1/dms/dmt_missing/decision", { agent_did: avatarB.did, decision: "accept" }],
+      ["POST", "/v1/dms/dmt_missing/messages", { from: avatarA.did, text: "Owner DM", seq: 1 }],
+    ];
+    for (const [method, path, body] of ownerAttempts) {
+      expect((await send(method, path, body, siteA.privateKeyPem)).status, `owner ${method} ${path}`).toBe(403);
+      expect((await send(method, path, body, undefined, { cookie: "shubur_session=human-observer" })).status, `human ${method} ${path}`).toBe(403);
+      expect((await send(method, path, body)).status, `unsigned ${method} ${path}`).toBe(401);
+    }
+
+    const signedLike = await postAgent(`/v1/posts/${postId}/likes`, { agent_did: avatarB.did }, avatarB);
+    expect(signedLike.status).toBe(201);
+    const homePath = `/v1/agents/${encodeURIComponent(avatarA.did)}/home`;
+    expect((await get(homePath)).status).toBe(401);
+    expect((await getAgent(homePath, avatarA)).status).toBe(200);
+  });
+
+  it("threads, engagement, blocks, reports, and spam flags remain agent-driven", async () => {
+    const alicePost = await postAgent(`/v1/agents/${avatarA.did}/posts`, { text: "A public note from Alice." }, avatarA);
+    const alicePostId = (alicePost.data as { post_id: string }).post_id;
+    const bobPost = await postAgent(`/v1/agents/${avatarB.did}/posts`, { text: "A public note from Bob." }, avatarB);
+    const bobPostId = (bobPost.data as { post_id: string }).post_id;
+
+    const reply = await postAgent(`/v1/posts/${alicePostId}/replies`, { agent_did: avatarB.did, text: "A reply from Bob." }, avatarB);
+    expect(reply.status).toBe(201);
+    const thread = await get(`/v1/posts/${alicePostId}`);
+    const threadData = thread.data as { post: { postId: string }; replies: Array<{ postId: string; replyTo?: string }> };
+    expect(threadData.post.postId).toBe(alicePostId);
+    expect(threadData.replies.some((item) => item.replyTo === alicePostId)).toBe(true);
+
+    expect((await postAgent(`/v1/posts/${alicePostId}/likes`, { agent_did: avatarB.did }, avatarB)).status).toBe(201);
+    expect((await postAgent(`/v1/posts/${alicePostId}/likes`, { agent_did: avatarB.did }, avatarB)).status).toBe(200);
+    const likedThread = await get(`/v1/posts/${alicePostId}`);
+    expect((likedThread.data as { post: { likeCount: number } }).post.likeCount).toBe(1);
+    expect((await sendAgent("DELETE", `/v1/posts/${alicePostId}/likes`, { agent_did: avatarB.did }, avatarB)).status).toBe(200);
+
+    const repost = await postAgent(`/v1/posts/${bobPostId}/reposts`, { agent_did: avatarA.did }, avatarA);
+    expect(repost.status).toBe(201);
+    const bobTimeline = await get(`/v1/agents/${encodeURIComponent(avatarA.did)}/timeline`);
+    expect((bobTimeline.data as { posts: Array<{ kind: string; post: { postId: string } }> }).posts.some((item) => item.kind === "repost" && item.post.postId === bobPostId)).toBe(true);
+    await sendAgent("DELETE", `/v1/posts/${bobPostId}/reposts`, { agent_did: avatarA.did }, avatarA);
+
+    const report = await postAgent("/v1/reports", {
+      reporter_did: avatarA.did, subject_did: avatarB.did, ref_type: "post", ref_id: bobPostId, note: "Agent-chosen signal",
+    }, avatarA);
+    expect(report.status).toBe(201);
+    const flag = await postAgent("/v1/spam-flags", {
+      agent_did: avatarA.did, target_type: "post", target_id: bobPostId,
+    }, avatarA);
+    expect(flag.status).toBe(201);
+    const signals = await getAgent(`/v1/agents/${encodeURIComponent(avatarB.did)}/signals`, avatarB);
+    expect((signals.data as { reports: Array<{ reporterDid: string }>; spam_flags: Array<{ actorDid: string }> }).reports.some((item) => item.reporterDid === avatarA.did)).toBe(true);
+    expect((signals.data as { spam_flags: Array<{ actorDid: string }> }).spam_flags.some((item) => item.actorDid === avatarA.did)).toBe(true);
+
+    const publicNetwork = await get("/v1/network");
+    expect((publicNetwork.data as { timeline: Array<{ post: { postId: string } }> }).timeline.some((item) => item.post.postId === bobPostId)).toBe(true);
+    expect((await postAgent("/v1/blocks", { blocker_did: avatarA.did, blocked_did: avatarB.did }, avatarA)).status).toBe(201);
+    expect((await postAgent(`/v1/posts/${bobPostId}/replies`, { agent_did: avatarA.did, text: "Blocked reply" }, avatarA)).status).toBe(403);
+    expect((await postAgent("/v1/dms/requests", { from: avatarA.did, to: avatarB.did }, avatarA)).status).toBe(403);
+    expect((await postAgent("/v1/follows", { follower: avatarA.did, followee: avatarB.did }, avatarA)).status).toBe(403);
   });
 });

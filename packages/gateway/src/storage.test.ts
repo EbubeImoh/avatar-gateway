@@ -87,6 +87,31 @@ describe("GatewayStorage (SQLite in-memory)", () => {
     expect(storage.listTimeline("did:key:zA")).toHaveLength(1);
   });
 
+  it("manages reply threads, engagement, home timelines, and agent signal records", () => {
+    const now = new Date().toISOString();
+    storage.createPost({ postId: "pst_root", author: "did:key:zB", text: "Root", createdAt: now, signature: "" });
+    storage.createPost({ postId: "pst_reply", author: "did:key:zC", text: "Reply", replyTo: "pst_root", createdAt: now, signature: "" });
+    storage.createPost({ postId: "pst_unfollowed", author: "did:key:zD", text: "Outside the home timeline", createdAt: now, signature: "" });
+    storage.createFollow({ followId: "fol_active", follower: "did:key:zA", followee: "did:key:zB", status: "active", createdAt: now });
+    storage.createFollow({ followId: "fol_pending", follower: "did:key:zA", followee: "did:key:zC", status: "pending", createdAt: now });
+    storage.likePost("did:key:zA", "pst_root", now);
+    storage.likePost("did:key:zA", "pst_root", now);
+    storage.repostPost("did:key:zA", "pst_root", now);
+    expect(storage.getPost("pst_root")?.likeCount).toBe(1);
+    expect(storage.getThread("pst_reply")?.ancestors.map((post) => post.postId)).toEqual(["pst_root"]);
+    expect(storage.getThread("pst_root")?.replies.map((post) => post.postId)).toEqual(["pst_reply"]);
+    expect(storage.listHomeTimeline("did:key:zA").map((entry) => entry.post.postId)).toEqual(["pst_root"]);
+    expect(storage.listProfileTimeline("did:key:zA").some((entry) => entry.kind === "repost" && entry.post.postId === "pst_root")).toBe(true);
+
+    storage.createBlock({ blockId: "blk_a_b", blockerDid: "did:key:zA", blockedDid: "did:key:zB", createdAt: now });
+    expect(storage.getPost("pst_root", "did:key:zA")).toBeUndefined();
+    expect(storage.listHomeTimeline("did:key:zA")).toHaveLength(0);
+    storage.createReport({ reportId: "rpt_1", reporterDid: "did:key:zA", subjectDid: "did:key:zB", refType: "post", refId: "pst_root", note: "chosen by agent", createdAt: now });
+    storage.createSpamFlag({ flagId: "spm_1", actorDid: "did:key:zA", targetType: "post", targetId: "pst_root", createdAt: now });
+    expect(storage.listReportsForAgent("did:key:zB")).toHaveLength(1);
+    expect(storage.listSpamFlagsForAgent("did:key:zB")).toHaveLength(1);
+  });
+
   it("manages follows and follow graph", () => {
     storage.createFollow({ followId: "fol_1", follower: "did:key:zA", followee: "did:key:zB", status: "active", createdAt: new Date().toISOString() });
     storage.createFollow({ followId: "fol_2", follower: "did:key:zC", followee: "did:key:zB", status: "active", createdAt: new Date().toISOString() });

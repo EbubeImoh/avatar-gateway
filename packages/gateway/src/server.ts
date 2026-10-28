@@ -81,6 +81,20 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
   const signedRequestNonces = new Map<string, number>();
   const billingAdapter = opts.billingAdapter;
   const tenantForRequest = new WeakMap<object, TenantRecord>();
+  const verifiedAgentForRequest = new WeakMap<object, string>();
+
+  function isSocialWriteRoute(method: string, url: string): boolean {
+    const pathname = new URL(url, "http://gateway.local").pathname;
+    const verb = method.toUpperCase();
+    return (verb === "PUT" && /^\/v1\/agents\/[^/]+\/profile$/.test(pathname)) ||
+      (verb === "POST" && /^\/v1\/agents\/[^/]+\/posts$/.test(pathname)) ||
+      ((verb === "POST" || verb === "DELETE") && /^\/v1\/posts\/[^/]+(?:\/(?:replies|likes|reposts))?$/.test(pathname)) ||
+      ((verb === "POST" || verb === "DELETE") && /^\/v1\/follows(?:\/[^/]+(?:\/decision)?)?$/.test(pathname)) ||
+      ((verb === "POST" || verb === "DELETE") && pathname === "/v1/blocks") ||
+      (verb === "POST" && pathname === "/v1/reports") ||
+      ((verb === "POST" || verb === "DELETE") && pathname === "/v1/spam-flags") ||
+      (verb === "POST" && /^\/v1\/dms\/(?:requests|[^/]+\/(?:decision|messages))$/.test(pathname));
+  }
 
   // Active WebSocket sessions and per-visit limits.
   const wsSessions = new Map<string, {
@@ -106,39 +120,67 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
   app.register(websocketPlugin, { options: { maxPayload: 16_384 } });
 
   app.addHook("preHandler", async (request, reply) => {
-    if (!request.url.startsWith("/v1/") || request.url.split("?", 1)[0] === "/v1/tenants") return;
-    if (request.headers.upgrade === "websocket") return;
+    if (!request.url.startsWith("/v1/") || new URL(request.url, "http://gateway.local").pathname === "/v1/tenants" || request.headers.upgrade === "websocket") return;
     const tenantKey = request.headers["x-tenant-key"];
     if (typeof tenantKey !== "string") {
       if (opts.hostedMode) return reply.status(401).send({ type: "unauthorized", detail: "x-tenant-key is required" });
-      return;
+    } else {
+      const tenant = storage.getTenantByApiKey(tenantKey);
+      if (!tenant) return reply.status(401).send({ type: "unauthorized", detail: "Invalid tenant key" });
+      const now = Date.now();
+      const minuteStart = new Date(now - 60_000).toISOString();
+      const calls = storage.getTenantDailyUsage(tenant.tenantId, "api.call", minuteStart);
+      if (calls >= tenant.quotas.apiCallsPerMinute) {
+        return reply.status(429).send({ type: "rate_limited", detail: "Tenant API call limit exceeded" });
+      }
+      tenantForRequest.set(request, tenant);
+      storage.recordUsage({ tenantId: tenant.tenantId, eventType: "api.call", quantity: 1, ts: new Date(now).toISOString() }, billingAdapter);
     }
-    const tenant = storage.getTenantByApiKey(tenantKey);
-    if (!tenant) return reply.status(401).send({ type: "unauthorized", detail: "Invalid tenant key" });
-    const now = Date.now();
-    const minuteStart = new Date(now - 60_000).toISOString();
-    const calls = storage.getTenantDailyUsage(tenant.tenantId, "api.call", minuteStart);
-    if (calls >= tenant.quotas.apiCallsPerMinute) {
-      return reply.status(429).send({ type: "rate_limited", detail: "Tenant API call limit exceeded" });
+
+    if (isSocialWriteRoute(request.method, request.url)) {
+      const agentDid = request.headers["x-ag-agent-did"];
+      const isOwnerSession = typeof request.headers["x-ag-site-did"] === "string" || typeof request.headers.cookie === "string";
+      if (typeof agentDid !== "string") {
+        return reply.status(isOwnerSession ? 403 : 401).send({ type: isOwnerSession ? "observer_read_only" : "unauthorized" });
+      }
+      if (!verifyAgentRequest(request, agentDid)) {
+        return reply.status(isOwnerSession ? 403 : 401).send({ type: isOwnerSession ? "observer_read_only" : "invalid_agent_signature" });
+      }
     }
-    tenantForRequest.set(request, tenant);
-    storage.recordUsage({ tenantId: tenant.tenantId, eventType: "api.call", quantity: 1, ts: new Date(now).toISOString() }, billingAdapter);
   });
 
   function meterTenantUsage(
     request: object,
-    eventType: "visit.started" | "post.created" | "dm.sent" | "page.read",
+    eventType: "visit.started" | "post.created" | "like.created" | "repost.created" | "dm.sent" | "page.read",
     metadata?: Record<string, unknown>,
   ): boolean {
     const tenant = tenantForRequest.get(request);
     if (!tenant) return true;
     const quotaResource = eventType === "visit.started" ? "visitsPerDay"
       : eventType === "post.created" ? "postsPerDay"
+      : eventType === "like.created" ? "likesPerDay"
+      : eventType === "repost.created" ? "repostsPerDay"
       : eventType === "dm.sent" ? "dmRequestsPerDay"
       : undefined;
     if (quotaResource && !storage.checkTenantQuota(tenant.tenantId, quotaResource).allowed) return false;
     storage.recordUsage({ tenantId: tenant.tenantId, eventType, quantity: 1, ts: new Date().toISOString(), metadata }, billingAdapter);
     return true;
+  }
+
+  function dailyQuotaReached(
+    agentDid: string,
+    resource: "posts" | "likes" | "reposts" | "follows" | "dmRequests",
+    limit: number,
+  ): boolean {
+    const dayStart = new Date();
+    dayStart.setUTCHours(0, 0, 0, 0);
+    const since = dayStart.toISOString();
+    const used = resource === "posts" ? storage.countPostsSince(agentDid, since)
+      : resource === "likes" ? storage.countLikesSince(agentDid, since)
+      : resource === "reposts" ? storage.countRepostsSince(agentDid, since)
+      : resource === "follows" ? storage.countFollowsSince(agentDid, since)
+      : storage.countDmRequestsSince(agentDid, since);
+    return used >= limit;
   }
 
   // Verify signed site requests and bound memory use for the replay cache.
@@ -207,6 +249,20 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
     const avatar = storage.getAvatar(avatarDid);
     const site = avatar ? storage.getSite(avatar.siteDid) : undefined;
     return Boolean(site && verifySiteRequest(request, site));
+  }
+
+  function verifyAgentRequest(request: SignedGatewayRequest, avatarDid: string): boolean {
+    if (verifiedAgentForRequest.get(request) === avatarDid) return true;
+    if (request.headers["x-ag-agent-did"] !== avatarDid) return false;
+    const avatar = storage.getAvatar(avatarDid);
+    if (!avatar) return false;
+    try {
+      const verified = didKeyFromPublicKey(avatar.publicKeyPem) === avatarDid && verifySignedBody(request, avatar.publicKeyPem);
+      if (verified) verifiedAgentForRequest.set(request, avatarDid);
+      return verified;
+    } catch {
+      return false;
+    }
   }
 
   function verifyVisitorHttpRequest(request: SignedGatewayRequest, visit: VisitRecord): boolean {
@@ -906,7 +962,7 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
       issuer, version: "0.2.0",
       public_key_pem: gatewayIdentity.publicKeyPem,
       did: gatewayIdentity.did,
-      capabilities: ["chat:send", "chat:receive", "page:read-public", "presence:announce", "profile:read", "timeline:read", "timeline:post", "follow:write", "dm:send", "dm:receive"],
+      capabilities: ["chat:send", "chat:receive", "page:read-public", "presence:announce", "profile:read", "profile:write", "timeline:read", "timeline:post", "follow:write", "dm:send", "dm:receive", "feed:read", "block:write"],
     });
   });
 
@@ -918,7 +974,7 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
     if (!profile) return reply.status(404).send({ type: "not_found" });
     const followers = storage.getFollowers(profile.avatarDid);
     const following = storage.getFollowing(profile.avatarDid);
-    return reply.send({ ...profile, followers: followers.length, following: following.length, is_ai: true });
+    return reply.send({ ...profile, followers: followers.length, following: following.length, is_ai: true, access: "human-observer" });
   });
 
   app.put<{ Params: { did: string }; Body: { name?: string; public_bio?: string; follow_policy?: string; dm_policy?: string } }>(
@@ -926,7 +982,7 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
     async (request, reply) => {
       const existing = storage.getProfile(request.params.did);
       if (!existing) return reply.status(404).send({ type: "not_found" });
-      if (!verifyOwnerRequest(request, request.params.did)) return reply.status(401).send({ type: "invalid_signature" });
+      if (!verifyAgentRequest(request, request.params.did)) return reply.status(401).send({ type: "invalid_agent_signature" });
       const body = request.body;
       if ((body.name !== undefined && (typeof body.name !== "string" || body.name.length < 1 || body.name.length > 100)) ||
           (body.public_bio !== undefined && (typeof body.public_bio !== "string" || body.public_bio.length > 2000)) ||
@@ -948,28 +1004,36 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
 
   // ===== Social: Posts =====
 
-  app.post<{ Params: { did: string }; Body: { text: string; reply_to?: string; nonce: string; ts: string; avatar_signature?: string } }>(
+  app.post<{ Params: { did: string }; Body: { text: string; reply_to?: string; reply_to_post_id?: string; avatar_signature?: string } }>(
     "/v1/agents/:did/posts",
     async (request, reply) => {
       const body = request.body;
-      if (!body?.text || body.text.length > 1000) {
+      if (typeof body?.text !== "string" || !body.text.trim() || body.text.length > 1000) {
         return reply.status(400).send({ type: "invalid_request", detail: "text required, max 1000 chars" });
       }
       const avatar = storage.getAvatar(request.params.did);
       if (!avatar) return reply.status(404).send({ type: "not_found" });
-      if (!verifyOwnerRequest(request, request.params.did)) return reply.status(401).send({ type: "invalid_signature" });
+      if (!verifyAgentRequest(request, request.params.did)) return reply.status(401).send({ type: "invalid_agent_signature" });
+      const replyTo = body.reply_to_post_id ?? body.reply_to;
+      if (replyTo) {
+        const parent = storage.getPost(replyTo);
+        if (!parent) return reply.status(404).send({ type: "not_found", detail: "Parent post not found" });
+        if (storage.areBlocked(request.params.did, parent.author)) return reply.status(403).send({ type: "blocked_pair" });
+      }
+      if (dailyQuotaReached(request.params.did, "posts", 10)) return reply.status(429).send({ type: "quota_exceeded", resource: "postsPerDay" });
       if (!meterTenantUsage(request, "post.created", { avatar_did: request.params.did })) {
         return reply.status(429).send({ type: "quota_exceeded", detail: "Tenant daily post quota exceeded" });
       }
       const postId = `pst_${randomUUID()}`;
-      storage.createPost({ postId, author: request.params.did, text: body.text, replyTo: body.reply_to, createdAt: new Date().toISOString(), signature: body.avatar_signature ?? "" });
+      const createdAt = new Date().toISOString();
+      storage.createPost({ postId, author: request.params.did, text: body.text, replyTo, createdAt, signature: body.avatar_signature ?? "" });
       storage.addActivity({
         activityId: `act_${randomUUID()}`, actorDid: request.params.did,
         type: "post.created", refId: postId,
         summary: `${avatar.name} posted: ${body.text.slice(0, 60)}`,
         visibility: "public", createdAt: new Date().toISOString(),
       });
-      return reply.status(201).send({ post_id: postId, author: request.params.did, created_at: new Date().toISOString() });
+      return reply.status(201).send({ post_id: postId, author: request.params.did, reply_to_post_id: replyTo, created_at: createdAt });
     },
   );
 
@@ -978,21 +1042,118 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
     async (request, reply) => {
       const profile = storage.getProfileByHandle(request.params.handle) ?? storage.getProfile(request.params.handle);
       if (!profile) return reply.status(404).send({ type: "not_found" });
-      const limit = Math.min(parseInt(request.query.limit ?? "20", 10), 100);
-      const posts = storage.listTimeline(profile.avatarDid, limit, request.query.cursor);
-      return reply.send({ posts, next_cursor: posts.at(-1)?.createdAt });
+      const rawLimit = Number.parseInt(request.query.limit ?? "20", 10);
+      const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(rawLimit, 100)) : 20;
+      const posts = storage.listProfileTimeline(profile.avatarDid, limit, request.query.cursor);
+      return reply.send({ posts, next_cursor: posts.at(-1)?.createdAt, access: "human-observer", human_observer: true });
+    },
+  );
+
+  app.get<{ Params: { did: string }; Querystring: { cursor?: string; limit?: string } }>(
+    "/v1/agents/:did/home",
+    async (request, reply) => {
+      if (!storage.getAvatar(request.params.did)) return reply.status(404).send({ type: "not_found" });
+      if (!verifyAgentRequest(request, request.params.did)) return reply.status(401).send({ type: "invalid_agent_signature" });
+      const rawLimit = Number.parseInt(request.query.limit ?? "30", 10);
+      const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(rawLimit, 100)) : 30;
+      const timeline = storage.listHomeTimeline(request.params.did, limit, request.query.cursor);
+      return reply.send({ timeline, next_cursor: timeline.at(-1)?.createdAt, access: "agent" });
+    },
+  );
+
+  app.get<{ Params: { id: string }; Querystring: { viewer_did?: string } }>(
+    "/v1/posts/:id",
+    async (request, reply) => {
+      const viewerDid = request.query.viewer_did;
+      if (viewerDid && !verifyAgentRequest(request, viewerDid)) return reply.status(401).send({ type: "invalid_agent_signature" });
+      const thread = storage.getThread(request.params.id, viewerDid);
+      if (!thread) return reply.status(404).send({ type: "not_found" });
+      return reply.send({ ...thread, access: viewerDid ? "agent" : "human-observer", human_observer: !viewerDid });
+    },
+  );
+
+  app.post<{ Params: { id: string }; Body: { agent_did?: string; text: string } }>(
+    "/v1/posts/:id/replies",
+    async (request, reply) => {
+      const body = request.body;
+      const agentDid = body?.agent_did ?? request.headers["x-ag-agent-did"];
+      if (typeof body?.text !== "string" || !body.text.trim() || body.text.length > 1000) {
+        return reply.status(400).send({ type: "invalid_request", detail: "text required, max 1000 chars" });
+      }
+      if (typeof agentDid !== "string" || !verifyAgentRequest(request, agentDid)) return reply.status(401).send({ type: "invalid_agent_signature" });
+      const parent = storage.getPost(request.params.id);
+      if (!parent) return reply.status(404).send({ type: "not_found", detail: "Parent post not found" });
+      if (storage.areBlocked(agentDid, parent.author)) return reply.status(403).send({ type: "blocked_pair" });
+      if (dailyQuotaReached(agentDid, "posts", 10)) return reply.status(429).send({ type: "quota_exceeded", resource: "postsPerDay" });
+      if (!meterTenantUsage(request, "post.created", { avatar_did: agentDid, reply_to_post_id: parent.postId })) {
+        return reply.status(429).send({ type: "quota_exceeded", detail: "Tenant daily post quota exceeded" });
+      }
+      const createdAt = new Date().toISOString();
+      const postId = `pst_${randomUUID()}`;
+      storage.createPost({ postId, author: agentDid, text: body.text, replyTo: parent.postId, createdAt, signature: "" });
+      storage.addActivity({ activityId: `act_${randomUUID()}`, actorDid: agentDid, type: "post.created", refId: postId,
+        summary: `Reply: ${body.text.slice(0, 60)}`, visibility: "public", createdAt });
+      return reply.status(201).send({ post_id: postId, author: agentDid, reply_to_post_id: parent.postId, created_at: createdAt });
     },
   );
 
   app.delete<{ Params: { id: string }; Querystring: { author: string } }>(
     "/v1/posts/:id",
     async (request, reply) => {
-      if (!verifyOwnerRequest(request, request.query.author)) return reply.status(401).send({ type: "invalid_signature" });
+      if (!verifyAgentRequest(request, request.query.author)) return reply.status(401).send({ type: "invalid_agent_signature" });
       const deleted = storage.deletePost(request.params.id, request.query.author);
       if (!deleted) return reply.status(404).send({ type: "not_found" });
       return reply.send({ status: "deleted" });
     },
   );
+
+  app.post<{ Params: { id: string }; Body: { agent_did?: string } }>("/v1/posts/:id/likes", async (request, reply) => {
+    const agentDid = request.body?.agent_did ?? request.headers["x-ag-agent-did"];
+    if (typeof agentDid !== "string" || !verifyAgentRequest(request, agentDid)) return reply.status(401).send({ type: "invalid_agent_signature" });
+    const post = storage.getPost(request.params.id);
+    if (!post) return reply.status(404).send({ type: "not_found" });
+    if (storage.areBlocked(agentDid, post.author)) return reply.status(403).send({ type: "blocked_pair" });
+    const alreadyLiked = storage.hasLike(agentDid, post.postId);
+    if (!alreadyLiked && dailyQuotaReached(agentDid, "likes", 200)) return reply.status(429).send({ type: "quota_exceeded", resource: "likesPerDay" });
+    if (!alreadyLiked && !meterTenantUsage(request, "like.created", { avatar_did: agentDid, post_id: post.postId })) {
+      return reply.status(429).send({ type: "quota_exceeded", resource: "likesPerDay" });
+    }
+    const created = storage.likePost(agentDid, post.postId);
+    return reply.status(created ? 201 : 200).send({ post_id: post.postId, liked: true, idempotent: !created });
+  });
+
+  app.delete<{ Params: { id: string }; Body: { agent_did?: string } }>("/v1/posts/:id/likes", async (request, reply) => {
+    const agentDid = request.body?.agent_did ?? request.headers["x-ag-agent-did"];
+    if (typeof agentDid !== "string" || !verifyAgentRequest(request, agentDid)) return reply.status(401).send({ type: "invalid_agent_signature" });
+    const post = storage.getPost(request.params.id);
+    if (!post) return reply.status(404).send({ type: "not_found" });
+    if (storage.areBlocked(agentDid, post.author)) return reply.status(403).send({ type: "blocked_pair" });
+    return reply.send({ post_id: post.postId, liked: false, removed: storage.unlikePost(agentDid, post.postId) });
+  });
+
+  app.post<{ Params: { id: string }; Body: { agent_did?: string } }>("/v1/posts/:id/reposts", async (request, reply) => {
+    const agentDid = request.body?.agent_did ?? request.headers["x-ag-agent-did"];
+    if (typeof agentDid !== "string" || !verifyAgentRequest(request, agentDid)) return reply.status(401).send({ type: "invalid_agent_signature" });
+    const post = storage.getPost(request.params.id);
+    if (!post) return reply.status(404).send({ type: "not_found" });
+    if (storage.areBlocked(agentDid, post.author)) return reply.status(403).send({ type: "blocked_pair" });
+    const alreadyReposted = storage.hasRepost(agentDid, post.postId);
+    if (!alreadyReposted && dailyQuotaReached(agentDid, "reposts", 50)) return reply.status(429).send({ type: "quota_exceeded", resource: "repostsPerDay" });
+    if (!alreadyReposted && !meterTenantUsage(request, "repost.created", { avatar_did: agentDid, post_id: post.postId })) {
+      return reply.status(429).send({ type: "quota_exceeded", resource: "repostsPerDay" });
+    }
+    const created = storage.repostPost(agentDid, post.postId);
+    return reply.status(created ? 201 : 200).send({ post_id: post.postId, reposted: true, idempotent: !created });
+  });
+
+  app.delete<{ Params: { id: string }; Body: { agent_did?: string } }>("/v1/posts/:id/reposts", async (request, reply) => {
+    const agentDid = request.body?.agent_did ?? request.headers["x-ag-agent-did"];
+    if (typeof agentDid !== "string" || !verifyAgentRequest(request, agentDid)) return reply.status(401).send({ type: "invalid_agent_signature" });
+    const post = storage.getPost(request.params.id);
+    if (!post) return reply.status(404).send({ type: "not_found" });
+    if (storage.areBlocked(agentDid, post.author)) return reply.status(403).send({ type: "blocked_pair" });
+    return reply.send({ post_id: post.postId, reposted: false, removed: storage.unrepostPost(agentDid, post.postId) });
+  });
 
   // ===== Social: Follows =====
 
@@ -1002,10 +1163,12 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
       const body = request.body;
       if (!body?.follower || !body.followee) return reply.status(400).send({ type: "invalid_request" });
       if (!storage.getAvatar(body.follower)) return reply.status(404).send({ type: "not_found", detail: "Follower avatar not found" });
-      if (!verifyOwnerRequest(request, body.follower)) return reply.status(401).send({ type: "invalid_signature" });
+      if (!verifyAgentRequest(request, body.follower)) return reply.status(401).send({ type: "invalid_agent_signature" });
       const followeeProfile = storage.getProfile(body.followee);
       if (!followeeProfile) return reply.status(404).send({ type: "not_found", detail: "Followee avatar not found" });
+      if (storage.areBlocked(body.follower, body.followee)) return reply.status(403).send({ type: "blocked_pair" });
       if (followeeProfile.followPolicy === "closed") return reply.status(403).send({ type: "scope_denied", detail: "Follow requests are closed" });
+      if (dailyQuotaReached(body.follower, "follows", 30)) return reply.status(429).send({ type: "quota_exceeded", resource: "followsPerDay" });
       const status: "active" | "pending" = followeeProfile.followPolicy === "open" ? "active" : "pending";
       const followId = `fol_${randomUUID()}`;
       storage.createFollow({ followId, follower: body.follower, followee: body.followee, status, createdAt: new Date().toISOString() });
@@ -1026,15 +1189,88 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
       const follow = storage.getFollowById(request.params.id);
       if (!follow) return reply.status(404).send({ type: "not_found" });
       if (request.body.decision !== "accept" && request.body.decision !== "reject") return reply.status(400).send({ type: "invalid_request" });
-      if (!verifyOwnerRequest(request, follow.followee)) return reply.status(401).send({ type: "invalid_signature" });
+      if (!verifyAgentRequest(request, follow.followee)) return reply.status(401).send({ type: "invalid_agent_signature" });
+      if (storage.areBlocked(follow.followee, follow.follower)) return reply.status(403).send({ type: "blocked_pair" });
       storage.updateFollowStatus(request.params.id, request.body.decision === "accept" ? "active" : "rejected");
       return reply.send({ status: request.body.decision === "accept" ? "active" : "rejected" });
     },
   );
 
+  app.delete<{ Params: { id: string }; Body: { follower?: string } }>("/v1/follows/:id", async (request, reply) => {
+    const followerDid = request.body?.follower ?? request.headers["x-ag-agent-did"];
+    if (typeof followerDid !== "string" || !verifyAgentRequest(request, followerDid)) return reply.status(401).send({ type: "invalid_agent_signature" });
+    const removed = storage.removeFollow(request.params.id, followerDid);
+    if (!removed) return reply.status(404).send({ type: "not_found" });
+    return reply.send({ status: "unfollowed" });
+  });
+
+  // ===== Agent-invoked network moderation mechanisms =====
+
+  app.post<{ Body: { blocker_did: string; blocked_did: string } }>("/v1/blocks", async (request, reply) => {
+    const { blocker_did: blockerDid, blocked_did: blockedDid } = request.body ?? {};
+    if (!blockerDid || !blockedDid || blockerDid === blockedDid) return reply.status(400).send({ type: "invalid_request" });
+    if (!storage.getAvatar(blockerDid) || !storage.getAvatar(blockedDid)) return reply.status(404).send({ type: "not_found" });
+    if (!verifyAgentRequest(request, blockerDid)) return reply.status(401).send({ type: "invalid_agent_signature" });
+    const blockId = `blk_${randomUUID()}`;
+    storage.createBlock({ blockId, blockerDid, blockedDid, createdAt: new Date().toISOString() });
+    storage.removeFollowsBetween(blockerDid, blockedDid);
+    return reply.status(201).send({ block_id: blockId, blocked_did: blockedDid, status: "blocked" });
+  });
+
+  app.delete<{ Body: { blocker_did: string; blocked_did: string } }>("/v1/blocks", async (request, reply) => {
+    const { blocker_did: blockerDid, blocked_did: blockedDid } = request.body ?? {};
+    if (!blockerDid || !blockedDid) return reply.status(400).send({ type: "invalid_request" });
+    if (!verifyAgentRequest(request, blockerDid)) return reply.status(401).send({ type: "invalid_agent_signature" });
+    return reply.send({ status: storage.removeBlock(blockerDid, blockedDid) ? "unblocked" : "not_blocked" });
+  });
+
+  app.post<{ Body: { reporter_did: string; subject_did: string; ref_type?: "post" | "thread" | "agent"; ref_id?: string; note?: string } }>("/v1/reports", async (request, reply) => {
+    const body = request.body;
+    if (!body?.reporter_did || !body.subject_did || (body.note !== undefined && (typeof body.note !== "string" || body.note.length > 1000))) {
+      return reply.status(400).send({ type: "invalid_request" });
+    }
+    if (!verifyAgentRequest(request, body.reporter_did)) return reply.status(401).send({ type: "invalid_agent_signature" });
+    if (!storage.getAvatar(body.subject_did)) return reply.status(404).send({ type: "not_found", detail: "Report subject not found" });
+    if (body.ref_type && !["post", "thread", "agent"].includes(body.ref_type)) return reply.status(400).send({ type: "invalid_request" });
+    if ((body.ref_type === "post" || body.ref_type === "thread") && (!body.ref_id || !storage.getPost(body.ref_id))) {
+      return reply.status(404).send({ type: "not_found", detail: "Report post not found" });
+    }
+    const reportId = `rpt_${randomUUID()}`;
+    storage.createReport({ reportId, reporterDid: body.reporter_did, subjectDid: body.subject_did,
+      refType: body.ref_type, refId: body.ref_id, note: body.note, createdAt: new Date().toISOString() });
+    return reply.status(201).send({ report_id: reportId, status: "recorded" });
+  });
+
+  app.post<{ Body: { agent_did: string; target_type: "post" | "agent"; target_id: string } }>("/v1/spam-flags", async (request, reply) => {
+    const body = request.body;
+    if (!body?.agent_did || !body.target_type || !body.target_id || !["post", "agent"].includes(body.target_type)) {
+      return reply.status(400).send({ type: "invalid_request" });
+    }
+    if (!verifyAgentRequest(request, body.agent_did)) return reply.status(401).send({ type: "invalid_agent_signature" });
+    const exists = body.target_type === "post" ? Boolean(storage.getPost(body.target_id)) : Boolean(storage.getAvatar(body.target_id));
+    if (!exists) return reply.status(404).send({ type: "not_found" });
+    const flagId = `spm_${randomUUID()}`;
+    storage.createSpamFlag({ flagId, actorDid: body.agent_did, targetType: body.target_type, targetId: body.target_id, createdAt: new Date().toISOString() });
+    return reply.status(201).send({ flag_id: flagId, status: "recorded" });
+  });
+
+  app.delete<{ Body: { agent_did: string; target_type: "post" | "agent"; target_id: string } }>("/v1/spam-flags", async (request, reply) => {
+    const body = request.body;
+    if (!body?.agent_did || !body.target_type || !body.target_id || !["post", "agent"].includes(body.target_type)) {
+      return reply.status(400).send({ type: "invalid_request" });
+    }
+    if (!verifyAgentRequest(request, body.agent_did)) return reply.status(401).send({ type: "invalid_agent_signature" });
+    return reply.send({ status: storage.removeSpamFlag(body.agent_did, body.target_type, body.target_id) ? "unflagged" : "not_flagged" });
+  });
+
+  app.get<{ Params: { did: string } }>("/v1/agents/:did/signals", async (request, reply) => {
+    if (!verifyAgentRequest(request, request.params.did)) return reply.status(401).send({ type: "invalid_agent_signature" });
+    return reply.send({ reports: storage.listReportsForAgent(request.params.did), spam_flags: storage.listSpamFlagsForAgent(request.params.did) });
+  });
+
   // ===== Social: DMs =====
 
-  app.post<{ Body: { from: string; to: string; intro?: string; nonce: string; ts: string; avatar_signature?: string } }>(
+  app.post<{ Body: { from: string; to: string; intro?: string; avatar_signature?: string } }>(
     "/v1/dms/requests",
     async (request, reply) => {
       const body = request.body;
@@ -1042,7 +1278,9 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
         return reply.status(400).send({ type: "invalid_request" });
       }
       if (!storage.getAvatar(body.from)) return reply.status(404).send({ type: "not_found", detail: "Sender avatar not found" });
-      if (!verifyOwnerRequest(request, body.from)) return reply.status(401).send({ type: "invalid_signature" });
+      if (!verifyAgentRequest(request, body.from)) return reply.status(401).send({ type: "invalid_agent_signature" });
+      if (storage.areBlocked(body.from, body.to)) return reply.status(403).send({ type: "blocked_pair" });
+      if (dailyQuotaReached(body.from, "dmRequests", 5)) return reply.status(429).send({ type: "quota_exceeded", resource: "dmRequestsPerDay" });
       const recipientProfile = storage.getProfile(body.to);
       if (!recipientProfile) return reply.status(404).send({ type: "not_found", detail: "Recipient avatar not found" });
       if (recipientProfile.dmPolicy === "closed") return reply.status(403).send({ type: "scope_denied", detail: "DMs closed" });
@@ -1068,7 +1306,7 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
     const agentDid = request.query.agent_did;
     if (!agentDid) return reply.status(400).send({ type: "invalid_request", detail: "agent_did is required" });
     if (!storage.getAvatar(agentDid)) return reply.status(404).send({ type: "not_found" });
-    if (!verifyOwnerRequest(request, agentDid)) return reply.status(401).send({ type: "invalid_signature" });
+    if (!verifyAgentRequest(request, agentDid)) return reply.status(401).send({ type: "invalid_agent_signature" });
     return reply.send({ threads: storage.listDmThreads(agentDid) });
   });
 
@@ -1080,7 +1318,8 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
       if (request.body?.agent_did !== thread.participant2) {
         return reply.status(403).send({ type: "scope_denied", detail: "Only the recipient can decide a DM request" });
       }
-      if (!verifyOwnerRequest(request, thread.participant2)) return reply.status(401).send({ type: "invalid_signature" });
+      if (!verifyAgentRequest(request, thread.participant2)) return reply.status(401).send({ type: "invalid_agent_signature" });
+      if (storage.areBlocked(thread.participant1, thread.participant2)) return reply.status(403).send({ type: "blocked_pair" });
       if (thread.status !== "pending") return reply.status(409).send({ type: "invalid_state", detail: "DM request is no longer pending" });
       const decision = request.body.decision;
       if (decision !== "accept" && decision !== "reject") return reply.status(400).send({ type: "invalid_request" });
@@ -1098,16 +1337,17 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
       if (agentDid !== thread.participant1 && agentDid !== thread.participant2) {
         return reply.status(403).send({ type: "scope_denied", detail: "Only thread participants can read messages" });
       }
-      if (!verifyOwnerRequest(request, agentDid)) return reply.status(401).send({ type: "invalid_signature" });
+      if (!verifyAgentRequest(request, agentDid)) return reply.status(401).send({ type: "invalid_agent_signature" });
+      if (storage.areBlocked(thread.participant1, thread.participant2)) return reply.status(403).send({ type: "blocked_pair" });
       return reply.send({ thread_id: thread.threadId, status: thread.status, intro: thread.intro, messages: storage.getDmMessages(thread.threadId) });
     },
   );
 
-  app.post<{ Params: { id: string }; Body: { text: string; seq: number; nonce: string; ts: string; avatar_signature?: string; from: string } }>(
+  app.post<{ Params: { id: string }; Body: { text: string; seq: number; avatar_signature?: string; from: string } }>(
     "/v1/dms/:id/messages",
     async (request, reply) => {
       const body = request.body;
-      if (!body?.text || body.text.length > 1000 || !body.from || !Number.isSafeInteger(body.seq) || body.seq < 1) {
+      if (typeof body?.text !== "string" || !body.text.trim() || body.text.length > 1000 || !body.from || !Number.isSafeInteger(body.seq) || body.seq < 1) {
         return reply.status(400).send({ type: "invalid_request" });
       }
       const thread = storage.getDmThread(request.params.id);
@@ -1115,8 +1355,11 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
       if (body.from !== thread.participant1 && body.from !== thread.participant2) {
         return reply.status(403).send({ type: "scope_denied", detail: "Only thread participants can send messages" });
       }
-      if (!verifyOwnerRequest(request, body.from)) return reply.status(401).send({ type: "invalid_signature" });
+      if (!verifyAgentRequest(request, body.from)) return reply.status(401).send({ type: "invalid_agent_signature" });
+      if (storage.areBlocked(thread.participant1, thread.participant2)) return reply.status(403).send({ type: "blocked_pair" });
       if (thread.status !== "accepted") return reply.status(403).send({ type: "scope_denied", detail: "DM request must be accepted first" });
+      const minuteSince = new Date(Date.now() - 60_000).toISOString();
+      if (storage.countDmMessagesSince(body.from, minuteSince) >= 4) return reply.status(429).send({ type: "rate_limited", resource: "dmMsgsPerMinute" });
       const messageId = `dmm_${randomUUID()}`;
       storage.addDmMessage({
         messageId, threadId: request.params.id, from: body.from,
@@ -1129,12 +1372,23 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
 
   // ===== Activity feed =====
 
+  app.get("/v1/network", async (_request, reply) => {
+    const profiles = storage.listProfiles().map((profile) => ({
+      ...profile,
+      followers: storage.getFollowers(profile.avatarDid),
+      following: storage.getFollowing(profile.avatarDid),
+      is_ai: true as const,
+    }));
+    const timeline = storage.listNetworkTimeline(100);
+    return reply.send({ profiles, timeline, access: "human-observer", human_observer: true });
+  });
+
   app.get<{ Querystring: { cursor?: string; limit?: string; following_of?: string } }>(
     "/v1/feed",
     async (request, reply) => {
       const limit = Math.min(parseInt(request.query.limit ?? "50", 10), 100);
       const activities = storage.getActivityFeed(limit, request.query.cursor, request.query.following_of);
-      return reply.send({ activities, next_cursor: activities.at(-1)?.createdAt });
+      return reply.send({ activities, next_cursor: activities.at(-1)?.createdAt, access: "human-observer", human_observer: true });
     },
   );
 

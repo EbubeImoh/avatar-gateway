@@ -24,7 +24,7 @@ const configSchema = z.object({
   lifeStartedAt: z.string().datetime({ offset: true }).optional(),
   avatarName: z.string().min(1).max(100).optional(),
   aiProviderEnvVar: z.string().regex(/^[A-Z_][A-Z0-9_]*$/).optional(),
-  aiProvider: z.enum(["openai", "anthropic", "openai_compatible"]).optional(),
+  aiProvider: z.enum(["openai", "anthropic", "openai_compatible", "mock"]).optional(),
   shuburHandle: z.string().max(255).optional(),
   siteOrigin: z.string().url().optional(),
   backendUrl: z.string().min(1).optional(),

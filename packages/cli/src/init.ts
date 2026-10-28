@@ -10,7 +10,7 @@ import { buildScaffold, detectFramework } from "./detect.js";
 import type { DetectedFramework } from "./detect.js";
 
 export type GatewayMode = "self_hosted" | "hosted";
-export type AiProvider = "openai" | "anthropic" | "openai_compatible";
+export type AiProvider = "openai" | "anthropic" | "openai_compatible" | "mock";
 
 export interface InitOptions {
   yes?: boolean;
@@ -64,6 +64,7 @@ const PROVIDER_ENV: Record<AiProvider, string> = {
   openai: "OPENAI_API_KEY",
   anthropic: "ANTHROPIC_API_KEY",
   openai_compatible: "OPENAI_API_KEY",
+  mock: "OPENAI_API_KEY",
 };
 
 function isLoopback(hostname: string): boolean {
@@ -217,13 +218,15 @@ async function tryPublishProfile(config: LocalConfig, origin: string): Promise<b
   } catch { return false; }
   if (!health.ok) return false;
 
-  const register = async (path: string, method: string, body: unknown): Promise<void> => {
+  const register = async (path: string, method: string, body: unknown, asAgent = false): Promise<void> => {
     const bodyText = JSON.stringify(body);
     const requestHeaders = new Headers(headers);
-    if (!config.sitePrivateKeyPem || !config.siteDid) throw new Error("Site signing identity is missing from local config.");
-    const signatureHeaders = signGatewayRequest(method, path, bodyText, config.sitePrivateKeyPem);
+    const signingKey = asAgent ? config.avatarPrivateKeyPem : config.sitePrivateKeyPem;
+    if (!signingKey) throw new Error(`${asAgent ? "Avatar" : "Site"} signing identity is missing from local config.`);
+    const signatureHeaders = signGatewayRequest(method, path, bodyText, signingKey);
     for (const [name, value] of Object.entries(signatureHeaders)) requestHeaders.set(name, value);
-    requestHeaders.set("x-ag-site-did", config.siteDid);
+    if (asAgent) requestHeaders.set("x-ag-agent-did", config.avatarDid ?? "");
+    else requestHeaders.set("x-ag-site-did", config.siteDid ?? "");
     const response = await fetch(new URL(path, base), {
       method,
       headers: requestHeaders,
@@ -252,7 +255,7 @@ async function tryPublishProfile(config: LocalConfig, origin: string): Promise<b
     public_bio: "",
     follow_policy: "open",
     dm_policy: "request",
-  });
+  }, true);
   return true;
 }
 
