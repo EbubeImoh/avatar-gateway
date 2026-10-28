@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mkdtemp, rm, readFile, writeFile, stat } from "node:fs/promises";
 import { detectFramework, buildScaffold } from "./detect.js";
-import { formatInitSummary, runInit } from "./init.js";
+import { DEFAULT_HOSTED_GATEWAY_URL, formatInitSummary, runInit } from "./init.js";
+import { runCli } from "./cli-runner.js";
 
 // ── detectFramework ────────────────────────────────────────────────────────
 
@@ -33,6 +34,26 @@ describe("detectFramework", () => {
     expect(await detectFramework(tmpDir)).toBe("plain-html");
     await rm(tmpDir, { recursive: true, force: true });
   });
+
+  it("prints help and the package version for CLI flags and the help command", async () => {
+    const stdout = { value: "", write(chunk: string) { this.value += chunk; return true; } };
+    const stderr = { value: "", write(chunk: string) { this.value += chunk; return true; } };
+    expect(await runCli(["--help"], { cwd: process.cwd(), stdout, stderr })).toBe(0);
+    expect(stdout.value).toContain("Usage:");
+    expect(stdout.value).toContain("--ai-provider <name>");
+    stdout.value = "";
+    expect(await runCli(["-h"], { cwd: process.cwd(), stdout, stderr })).toBe(0);
+    expect(stdout.value).toContain("Usage:");
+    stdout.value = "";
+    expect(await runCli(["help"], { cwd: process.cwd(), stdout, stderr })).toBe(0);
+    expect(stdout.value).toContain("network-loop");
+    stdout.value = "";
+    expect(await runCli(["--version"], { cwd: process.cwd(), stdout, stderr })).toBe(0);
+    expect(stdout.value.trim()).toBe("0.2.0");
+    stdout.value = "";
+    expect(await runCli(["-v"], { cwd: process.cwd(), stdout, stderr })).toBe(0);
+    expect(stdout.value.trim()).toBe("0.2.0");
+  });
 });
 
 // ── buildScaffold ──────────────────────────────────────────────────────────
@@ -41,9 +62,9 @@ describe("buildScaffold", () => {
   it("returns SDK packages for all frameworks", () => {
     for (const fw of ["nextjs", "react-vite", "vite", "plain-html"] as const) {
       const scaffold = buildScaffold(fw, "TestBot", "/avatar-gateway");
-      expect(scaffold.packages).toContain("@avatar-gateway/sdk");
-      expect(scaffold.packages).toContain("@avatar-gateway/starter-apartment");
-      expect(scaffold.packages).toContain("@shubur/life");
+      expect(scaffold.packages).toContain("@avatar-gateway/sdk@^0.2.0");
+      expect(scaffold.packages).toContain("@avatar-gateway/starter-apartment@^0.2.0");
+      expect(scaffold.packages).toContain("@shubur/life@^0.2.0");
       expect(scaffold.files).toBeTruthy();
     }
   });
@@ -59,7 +80,7 @@ describe("buildScaffold", () => {
     expect(scaffold.files["index.html"]).toContain('from "@avatar-gateway/starter-apartment"');
     expect(scaffold.files["index.html"]).toContain('from "@shubur/life"');
     expect(scaffold.files["index.html"]).toContain('mount("#apartment", { avatar: { name: "TestBot" } }, life)');
-    expect(scaffold.packages).toContain("vite");
+    expect(scaffold.packages).toContain("vite@^6.0.0");
   });
 
   it("generates a usable React component with Avatar.mount", () => {
@@ -117,6 +138,19 @@ describe("runInit --yes", () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
+  it("defaults hosted setup to the deployed public gateway URL", async () => {
+    const result = await runInit({
+      yes: true,
+      mode: "hosted",
+      tenantApiKey: "ag_test_key_for_hosted_default",
+      siteOrigin: "https://example.com",
+      installPackages: false,
+      connectGateway: false,
+    }, tmpDir);
+    expect(result.gatewayUrl).toBe(DEFAULT_HOSTED_GATEWAY_URL);
+    expect(result.gatewayUrl).toBe("https://shubur-gateway.vercel.app");
+  });
+
   it("does not overwrite existing scaffold files", async () => {
     await writeFile(join(tmpDir, "package.json"), JSON.stringify({ dependencies: {} }));
     // First init
@@ -138,7 +172,7 @@ describe("runInit --yes", () => {
     const install = vi.fn(async () => undefined);
     const result = await runInit({ yes: true, installPackages: true, connectGateway: false, installer: install }, tmpDir);
     expect(result.packagesInstalled).toBe(true);
-    expect(install).toHaveBeenCalledWith(expect.arrayContaining(["@avatar-gateway/sdk", "@avatar-gateway/starter-apartment"]), tmpDir);
+    expect(install).toHaveBeenCalledWith(expect.arrayContaining(["shubur@^0.2.0", "@avatar-gateway/sdk@^0.2.0", "@avatar-gateway/starter-apartment@^0.2.0"]), tmpDir);
     const pkg = JSON.parse(await readFile(join(tmpDir, "package.json"), "utf8")) as { scripts: Record<string, string> };
     expect(pkg.scripts["shubur:gateway"]).toBe("avatar-gateway-server");
   });
@@ -149,9 +183,32 @@ describe("runInit --yes", () => {
     const pkg = JSON.parse(await readFile(join(tmpDir, "package.json"), "utf8")) as { scripts: Record<string, string> };
     expect(pkg.scripts.dev).toBe("vite --host 127.0.0.1");
     expect(pkg.scripts["shubur:gateway"]).toBe("avatar-gateway-server");
-    expect(install).toHaveBeenCalledWith(expect.arrayContaining(["vite"]), tmpDir);
+    expect(install).toHaveBeenCalledWith(expect.arrayContaining(["vite@^6.0.0"]), tmpDir);
     expect(await readFile(join(tmpDir, "index.html"), "utf8")).toContain("@avatar-gateway/sdk");
     await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("allows the mock provider without creating an API key example", async () => {
+    const result = await runInit({
+      yes: true,
+      aiProvider: "mock",
+      installPackages: false,
+      connectGateway: false,
+    }, tmpDir);
+    expect(result.filesWritten).toContain(".avatar-gateway/config.json");
+    const config = JSON.parse(await readFile(join(tmpDir, ".avatar-gateway/config.json"), "utf8")) as Record<string, unknown>;
+    expect(config.aiProvider).toBe("mock");
+    expect(config.aiProviderEnvVar).toBeUndefined();
+    expect(await readFile(join(tmpDir, ".env.example"), "utf8")).toContain("Mock provider does not require an API key");
+  });
+
+  it("explains that package publishing is required when npm install fails", async () => {
+    await expect(runInit({
+      yes: true,
+      installPackages: true,
+      connectGateway: false,
+      installer: async () => { throw new Error("npm 404"); },
+    }, tmpDir)).rejects.toThrow("These packages must be published to npm");
   });
 
   it("formats next steps for non-interactive CLI output", () => {

@@ -1,5 +1,9 @@
 import { describe, expect, it, beforeEach } from "vitest";
 import { GatewayStorage } from "./storage.js";
+import { BlobGatewayStorage, GatewayStorageConflictError, type GatewayBlobSnapshot, type GatewayBlobStore } from "./blob-storage.js";
+import { mkdtemp, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 describe("GatewayStorage (SQLite in-memory)", () => {
   let storage: GatewayStorage;
@@ -28,6 +32,22 @@ describe("GatewayStorage (SQLite in-memory)", () => {
     expect(site?.offeredScopes).toEqual(["chat:send", "chat:receive"]);
     expect(storage.getSiteByOrigin("https://site-a.example")?.siteDid).toBe("did:key:zSiteA");
     expect(storage.getSiteByMtlsFingerprint("sha256:abc123")?.siteDid).toBe("did:key:zSiteA");
+  });
+
+  it("persists the local SQLite file across GatewayStorage instances", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "gateway-sqlite-file-"));
+    const path = join(dir, "gateway.sqlite");
+    try {
+      const first = new GatewayStorage(path);
+      first.appendAudit("local.persisted", "test", { safe: true });
+      first.close();
+      expect((await stat(path).then((file) => file.mode & 0o777))).toBe(0o600);
+      const reopened = new GatewayStorage(path);
+      expect(reopened.listAudit().map((event) => event.type)).toContain("local.persisted");
+      reopened.close();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it("registers and retrieves an avatar", () => {
@@ -145,5 +165,42 @@ describe("GatewayStorage (SQLite in-memory)", () => {
     storage.addActivity({ activityId: "act_2", actorDid: "did:key:zB", type: "agent.joined", refId: "did:key:zB", summary: "Bot B joined", visibility: "public", createdAt: new Date().toISOString() });
     const feed = storage.getActivityFeed();
     expect(feed.length).toBe(2);
+  });
+});
+
+describe("BlobGatewayStorage snapshot adapter", () => {
+  it("reloads persisted SQL state and rejects stale conditional writes", async () => {
+    let current: GatewayBlobSnapshot | null = null;
+    let nextEtag = 0;
+    const blobs: GatewayBlobStore = {
+      async read() { return current ? { bytes: Uint8Array.from(current.bytes), etag: current.etag } : null; },
+      async write(bytes, expectedEtag) {
+        if ((current?.etag ?? undefined) !== expectedEtag) throw new Error("BlobPreconditionFailedError");
+        current = { bytes: Uint8Array.from(bytes), etag: `etag-${++nextEtag}` };
+        return { etag: current.etag };
+      },
+    };
+    const first = await BlobGatewayStorage.create(blobs);
+    const unlockFirst = await first.beginRequest();
+    first.appendAudit("first.write", "test", { visibility: "public" });
+    await first.commitRequest();
+    unlockFirst();
+
+    const second = await BlobGatewayStorage.create(blobs);
+    const unlockSecond = await second.beginRequest();
+    expect(second.listAudit()).toHaveLength(1);
+    const unlockConcurrent = await first.beginRequest();
+    first.appendAudit("first.concurrent", "test", {});
+    second.appendAudit("second.concurrent", "test", {});
+    await first.commitRequest();
+    await expect(second.commitRequest()).rejects.toBeInstanceOf(GatewayStorageConflictError);
+    unlockSecond();
+    unlockConcurrent();
+
+    const recovered = await BlobGatewayStorage.create(blobs);
+    expect(recovered.listAudit().map((event) => event.type)).toEqual(["first.concurrent", "first.write"]);
+    first.close();
+    second.close();
+    recovered.close();
   });
 });

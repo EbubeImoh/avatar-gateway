@@ -12,7 +12,7 @@ export interface ChatMessage {
 }
 
 /**
- * Provider abstraction: OpenAI-compatible, Anthropic, Google, Ollama, mock...
+ * Provider abstraction: OpenAI-compatible, Anthropic, and mock providers.
  * BYO key: the owner's API key is read on the home backend only.
  */
 export interface LLMProvider {

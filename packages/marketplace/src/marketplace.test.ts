@@ -188,6 +188,16 @@ describe("PackRegistry.installFromLocalPath", () => {
     const registry = new PackRegistry("https://example.com", join(tmpDir, "packs"));
     await expect(registry.installFromLocalPath(file)).rejects.toThrow("Not entitled");
   });
+
+  it("reports actionable guidance when a pack id registry is unreachable", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("not configured", { status: 404 })));
+    try {
+      const registry = new PackRegistry("https://registry.example.test", join(tmpdir(), `shubur-unavailable-${Date.now()}`));
+      await expect(registry.install("starter-apartment")).rejects.toThrow("Configure SHUBUR_REGISTRY_URL or retry with --registry");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 // ── PackRegistry.listInstalled ─────────────────────────────────────────────

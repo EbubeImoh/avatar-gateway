@@ -23,7 +23,7 @@ import { randomUUID, timingSafeEqual } from "node:crypto";
 import type { IncomingHttpHeaders, IncomingMessage } from "node:http";
 import type { TLSSocket } from "node:tls";
 import type { WebSocket } from "ws";
-import { didKeyFromPublicKey, generateIdentity, signPayload, verifyPayload } from "./identity.js";
+import { didKeyFromPublicKey, generateIdentity, identityFromPrivateKeyPem, signPayload, verifyPayload } from "./identity.js";
 import { GATEWAY_MAX_SCOPES, GATEWAY_NETWORK_SCOPES, grantScopes, type Scope } from "./policy.js";
 import {
   issueVisitToken, verifyVisitToken, JtiReplayCache, proofKeyThumbprint, proofSignaturePayload,
@@ -39,6 +39,7 @@ import {
   type TenantRecord,
   DEFAULT_TENANT_QUOTAS,
 } from "./storage.js";
+import { BlobGatewayStorage, GatewayStorageConflictError } from "./blob-storage.js";
 
 export interface GatewayServerOptions {
   /** SQLite path, defaults to :memory: */
@@ -59,6 +60,12 @@ export interface GatewayServerOptions {
   hostedMode?: boolean;
   /** Operator secret required to create tenant credentials. */
   tenantAdminKey?: string;
+  /** Injected storage implementation (for example, a Blob snapshot store). */
+  storage?: GatewayStorage;
+  /** Browser origins allowed to read the public network endpoint. */
+  corsOrigins?: string[];
+  /** Optional stable gateway identity; set in environment for serverless deployments. */
+  gatewayIdentityPrivateKeyPem?: string;
 }
 
 export interface GatewayServer {
@@ -75,8 +82,10 @@ export interface GatewayServer {
  */
 export function createGatewayServer(opts: GatewayServerOptions = {}): GatewayServer {
   const issuer = opts.issuer ?? "did:web:gateway.localhost";
-  const storage = new GatewayStorage(opts.dbPath ?? ":memory:");
-  const gatewayIdentity = generateIdentity();
+  const storage = opts.storage ?? new GatewayStorage(opts.dbPath ?? ":memory:");
+  const gatewayIdentity = opts.gatewayIdentityPrivateKeyPem
+    ? identityFromPrivateKeyPem(opts.gatewayIdentityPrivateKeyPem)
+    : generateIdentity();
   const jtiCache = new JtiReplayCache();
   const signedRequestNonces = new Map<string, number>();
   const billingAdapter = opts.billingAdapter;
@@ -141,11 +150,59 @@ export function createGatewayServer(opts: GatewayServerOptions = {}): GatewaySer
 
   app.register(websocketPlugin, { options: { maxPayload: 16_384 } });
 
+  const allowedOrigins = new Set(opts.corsOrigins ?? []);
+  const blobRequestReleases = new WeakMap<object, () => void>();
+  app.addHook("onRequest", async (request, reply) => {
+    const origin = request.headers.origin;
+    if (origin && allowedOrigins.has(origin)) {
+      reply.header("access-control-allow-origin", origin);
+      reply.header("access-control-allow-methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+      reply.header("access-control-allow-headers", "content-type, x-tenant-key, x-ag-agent-did, x-ag-ts, x-ag-sig, x-ag-nonce, x-ag-site-did");
+      reply.header("vary", "Origin");
+      if (request.method === "OPTIONS") return reply.code(204).send();
+    }
+    if (opts.hostedMode && request.headers.upgrade === "websocket") {
+      return reply.code(503).send({
+        type: "websocket_unavailable",
+        detail: "Chat relay sessions require a self-hosted gateway with long-lived WebSocket support.",
+      });
+    }
+    if (storage instanceof BlobGatewayStorage && request.url.startsWith("/v1/")) {
+      blobRequestReleases.set(request, await storage.beginRequest());
+    }
+  });
+
+  app.addHook("onSend", async (request, reply, payload) => {
+    const release = blobRequestReleases.get(request);
+    try {
+      if (storage instanceof BlobGatewayStorage && release) {
+        await storage.commitRequest();
+      } else if (!(storage instanceof BlobGatewayStorage)) {
+        storage.flush();
+      }
+    } catch (error) {
+      if (error instanceof GatewayStorageConflictError) {
+        reply.code(409).header("content-type", "application/json; charset=utf-8");
+        return JSON.stringify({ type: "storage_conflict", detail: error.message });
+      }
+      throw error;
+    } finally {
+      release?.();
+      blobRequestReleases.delete(request);
+    }
+    return payload;
+  });
+
   app.addHook("preHandler", async (request, reply) => {
     if (!request.url.startsWith("/v1/") || new URL(request.url, "http://gateway.local").pathname === "/v1/tenants" || request.headers.upgrade === "websocket") return;
+    const requestPath = new URL(request.url, "http://gateway.local");
+    const publicObserverRead = request.method === "GET" && (
+      requestPath.pathname === "/v1/network" ||
+      (requestPath.pathname === "/v1/feed" && !requestPath.searchParams.has("following_of"))
+    );
     const tenantKey = request.headers["x-tenant-key"];
     if (typeof tenantKey !== "string") {
-      if (opts.hostedMode) return reply.status(401).send({ type: "unauthorized", detail: "x-tenant-key is required" });
+      if (opts.hostedMode && !publicObserverRead) return reply.status(401).send({ type: "unauthorized", detail: "x-tenant-key is required" });
     } else {
       const tenant = storage.getTenantByApiKey(tenantKey);
       if (!tenant) return reply.status(401).send({ type: "unauthorized", detail: "Invalid tenant key" });

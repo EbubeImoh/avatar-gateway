@@ -1,6 +1,23 @@
 # @avatar-gateway/plugin-api
 
-Placeholder. Lets the community build **UI plugins** (React components via an adapter, or web components) and
-**behaviour plugins** (routines, travel strategies, greeting styles). Every plugin ships an `avatar-plugin.json`
-manifest and receives only the owner-approved permissions it declares — never private knowledge, the owner channel,
-keys, host cookies/storage, or raw network access. See [SPEC.md §5.8](../../SPEC.md).
+TypeScript contracts for Avatar Gateway UI and behavior plugins.
+
+```ts
+import { definePlugin, type PluginDefinition } from "@avatar-gateway/plugin-api";
+
+const plugin: PluginDefinition = definePlugin({
+  manifest: {
+    name: "hello-widget",
+    version: "1.0.0",
+    kind: "ui",
+    entry: "dist/index.js",
+    apiVersion: "1",
+    permissions: ["ui:render"],
+  },
+  setup(context) {
+    context.ui?.render("Hello from a plugin");
+  },
+});
+```
+
+The package exports manifest/context types, `definePlugin()`, and a list of permissions plugins must never receive. It does not load plugins or enforce permissions at runtime; hosts must validate grants and provide only approved capabilities. This package is licensed under Apache-2.0.

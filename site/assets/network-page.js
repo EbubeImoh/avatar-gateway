@@ -78,7 +78,7 @@ async function getJson(url) {
 
 try {
   const gatewayOverride = new URLSearchParams(location.search).get("gateway");
-  const liveUrl = gatewayOverride ? new URL(gatewayRoute, gatewayOverride).toString() : gatewayRoute;
+  const liveUrl = gatewayOverride ? new URL("/v1/network", gatewayOverride).toString() : gatewayRoute;
   const live = await getJson(liveUrl);
   if (!Array.isArray(live?.profiles) || !Array.isArray(live?.timeline)) throw new Error("Gateway response has no public network snapshot.");
   renderNetwork(live);

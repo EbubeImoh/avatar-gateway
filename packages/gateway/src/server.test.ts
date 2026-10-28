@@ -2,7 +2,8 @@ import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { createPublicKey } from "node:crypto";
 import { createServer } from "node:http";
-import { createGatewayServer, signGatewayRequest, type GatewayServer } from "./server.js";
+import { createGatewayServer, signGatewayRequest, type GatewayServer } from "./gateway-server.js";
+import { BlobGatewayStorage, type GatewayBlobSnapshot, type GatewayBlobStore } from "./blob-storage.js";
 import { didKeyFromPublicKey, generateIdentity, signPayload } from "./identity.js";
 import { proofKeyThumbprint, proofSignaturePayload } from "./tokens.js";
 import WebSocket from "ws";
@@ -110,14 +111,32 @@ describe("Gateway HTTP server", () => {
   });
 
   it("requires tenant credentials when hosted mode is enabled", async () => {
+    let currentBlob: GatewayBlobSnapshot | null = null;
+    let nextEtag = 0;
+    const blobStore: GatewayBlobStore = {
+      async read() { return currentBlob ? { bytes: Uint8Array.from(currentBlob.bytes), etag: currentBlob.etag } : null; },
+      async write(bytes, expectedEtag) {
+        if ((currentBlob?.etag ?? undefined) !== expectedEtag) throw new Error("BlobPreconditionFailedError");
+        currentBlob = { bytes: Uint8Array.from(bytes), etag: `hosted-${++nextEtag}` };
+        return { etag: currentBlob.etag };
+      },
+    };
+    const storage = await BlobGatewayStorage.create(blobStore);
     const hosted = createGatewayServer({
-      dbPath: ":memory:", logger: false, port: 0, hostedMode: true,
+      storage, logger: false, port: 0, hostedMode: true,
       tenantAdminKey: "hosted-admin-secret-0123456789abcdef",
+      corsOrigins: ["https://shubur.com"],
     });
     try {
       const address = await hosted.start();
       expect((await fetch(new URL("/health", address))).status).toBe(200);
       expect((await fetch(new URL("/v1/directory", address))).status).toBe(401);
+      const publicNetwork = await fetch(new URL("/v1/network", address), { headers: { origin: "https://shubur.com" } });
+      expect(publicNetwork.status).toBe(200);
+      expect(publicNetwork.headers.get("access-control-allow-origin")).toBe("https://shubur.com");
+      expect(publicNetwork.headers.get("access-control-allow-headers")).toContain("x-ag-ts");
+      expect(publicNetwork.headers.get("access-control-allow-headers")).toContain("x-ag-sig");
+      expect((await fetch(new URL("/v1/feed?following_of=did:key:test", address))).status).toBe(401);
       const createdResponse = await fetch(new URL("/v1/tenants", address), {
         method: "POST",
         headers: { "content-type": "application/json", "x-tenant-admin-key": "hosted-admin-secret-0123456789abcdef" },
@@ -126,6 +145,33 @@ describe("Gateway HTTP server", () => {
       expect(createdResponse.status).toBe(201);
       const tenant = await createdResponse.json() as { api_key: string };
       expect((await fetch(new URL("/v1/directory", address), { headers: { "x-tenant-key": tenant.api_key } })).status).toBe(200);
+
+      const writePath = "/v1/agents/did:key:human/profile";
+      const body = JSON.stringify({ avatar_did: "did:key:human", handle: "human", name: "Human", public_bio: "" });
+      const ownerWrite = await fetch(new URL(writePath, address), {
+        method: "PUT",
+        headers: { "content-type": "application/json", "x-tenant-key": tenant.api_key, "x-ag-site-did": "did:key:site" },
+        body,
+      });
+      expect(ownerWrite.status).toBe(403);
+      const unsignedWrite = await fetch(new URL(writePath, address), {
+        method: "PUT",
+        headers: { "content-type": "application/json", "x-tenant-key": tenant.api_key },
+        body,
+      });
+      expect(unsignedWrite.status).toBe(401);
+
+      const socket = new WebSocket(address.replace(/^http/, "ws") + "/v1/visits/test/session");
+      const websocketStatus = await new Promise<number>((resolveStatus, rejectStatus) => {
+        socket.once("unexpected-response", (_request, response) => { response.resume(); resolveStatus(response.statusCode ?? 0); });
+        socket.once("error", rejectStatus);
+      });
+      expect(websocketStatus).toBe(503);
+      socket.terminate();
+
+      const recovered = await BlobGatewayStorage.create(blobStore);
+      expect(recovered.getTenantByApiKey(tenant.api_key)?.name).toBe("Hosted tenant");
+      recovered.close();
     } finally {
       await hosted.stop();
     }

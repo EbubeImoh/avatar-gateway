@@ -189,14 +189,23 @@ export class PackRegistry {
   private readonly registryUrl: string;
   private readonly installDir: string;
 
-  constructor(registryUrl = DEFAULT_REGISTRY_URL, installDir = DEFAULT_INSTALL_DIR, private readonly entitlement: EntitlementAdapter = new DenyPaidEntitlementAdapter()) {
+  constructor(registryUrl = process.env.SHUBUR_REGISTRY_URL ?? DEFAULT_REGISTRY_URL, installDir = DEFAULT_INSTALL_DIR, private readonly entitlement: EntitlementAdapter = new DenyPaidEntitlementAdapter()) {
     const parsed = validateRemoteUrl(registryUrl, "Registry URL");
     this.registryUrl = parsed.toString().replace(/\/$/, "");
     this.installDir = resolve(installDir);
   }
 
   async fetchIndex(): Promise<RegistryIndex> {
-    const bytes = await downloadBytes(`${this.registryUrl}/index.json`, "Registry fetch");
+    let bytes: Uint8Array;
+    try {
+      bytes = await downloadBytes(`${this.registryUrl}/index.json`, "Registry fetch");
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `Shubur Marketplace registry is unreachable or not configured at ${this.registryUrl} (${reason}). ` +
+        `Configure SHUBUR_REGISTRY_URL or retry with --registry <https-url> after a registry is published.`,
+      );
+    }
     let parsed: unknown;
     try { parsed = JSON.parse(new TextDecoder().decode(bytes)) as unknown; }
     catch { throw new Error("Registry returned invalid JSON."); }

@@ -3,7 +3,7 @@
  * Gateway server entry point. Start with: node dist/serve.js
  */
 
-import { createGatewayServer } from "./server.js";
+import { createGatewayServer } from "./gateway-server.js";
 import { chmod, mkdir, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 

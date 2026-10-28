@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { PackRegistry } from "@avatar-gateway/marketplace";
 import { DEFAULT_INSTALL_DIR, DEFAULT_REGISTRY_URL } from "@avatar-gateway/marketplace";
 
-export async function runInstall(packReference: string, cwd = process.cwd(), registryUrl = DEFAULT_REGISTRY_URL): Promise<string> {
+export async function runInstall(packReference: string, cwd = process.cwd(), registryUrl = process.env.SHUBUR_REGISTRY_URL ?? DEFAULT_REGISTRY_URL): Promise<string> {
   if (!packReference.trim()) throw new Error("Provide a pack id, HTTPS URL, or local manifest path.");
   const resolvedReference = packReference.startsWith("./") || packReference.startsWith("../")
     ? resolve(cwd, packReference)

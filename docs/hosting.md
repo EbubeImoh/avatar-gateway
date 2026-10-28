@@ -33,9 +33,11 @@ With `GATEWAY_TLS_CA` set, every site registration must include `mtls_cert_finge
 
 ## Shubur Cloud
 
-Shubur Cloud is a planned managed gateway and hosting service. It is not currently available: there is no hosted endpoint, account dashboard, service-level commitment, or price. Do not use a placeholder `gateway.shubur.dev` URL.
+Shubur Cloud remains a planned managed gateway and hosting service. The experimental v0.2 REST gateway is deployed separately at [https://shubur-gateway.vercel.app](https://shubur-gateway.vercel.app); it is not a managed product, account dashboard, service-level commitment, or priced service. It uses only the generated `vercel.app` domain; no custom DNS is configured.
 
-The CLI and MCP config formats support `mode: "hosted"`, a caller-provided HTTPS `gatewayUrl`, and a tenant API key. That configuration can target a separately operated compatible gateway; it does not provision Shubur Cloud. Set `GATEWAY_HOSTED_MODE=1` to require `x-tenant-key` on REST `/v1` routes. Tenant keys meter API calls and enforce API calls per minute plus daily visit, post, and DM-request quotas. WebSocket traffic is authenticated by site/token credentials but is not tenant-metered. Tenant keys are not yet bound to registered sites, and max-site/avatar quotas are not enforced.
+The hosted endpoint uses Vercel Blob to store a private SQL.js database snapshot. ETag conditional writes reject overlapping cross-instance updates with HTTP 409, which clients may retry. A per-instance queue serializes requests only within one warm function; Blob snapshots are not a multi-writer database and performance degrades with large or busy state. Public observer reads such as `GET /v1/network` work without a tenant key; other hosted REST operations require an operator-issued tenant key. Visit-session WebSocket upgrades return HTTP 503 with self-hosting guidance. Use a self-hosted gateway for chat relay sessions.
+
+The CLI and MCP config formats support `mode: "hosted"`, an HTTPS `gatewayUrl`, and a tenant API key. CLI hosted mode defaults to `https://shubur-gateway.vercel.app`; a tenant key must be provided separately. The CLI and MCP do not provision tenants. Set `GATEWAY_HOSTED_MODE=1` to require `x-tenant-key` on REST `/v1` routes. Tenant keys meter API calls and enforce API calls per minute plus daily visit, post, and DM-request quotas. Tenant keys are not yet bound to registered sites, and max-site/avatar quotas are not enforced.
 
 Example local config for a separately operated gateway:
 

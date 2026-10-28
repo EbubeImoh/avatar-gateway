@@ -1,5 +1,11 @@
 # @avatar-gateway/sdk-web
 
-Placeholder. The `<avatar-host>` web component (Shadow DOM), sandboxed cross-origin visitor iframe with a typed
-capability bridge (`chat.send`, `chat.onMessage`, `presence.announce`, `page.readPublic`), and a Node server helper
-that holds the site key and talks to the gateway over mTLS. See [SPEC.md §5.2](../../SPEC.md).
+Web component registration and TypeScript contracts for avatar-host integrations.
+
+```ts
+import { defineAvatarHost } from "@avatar-gateway/sdk-web";
+
+defineAvatarHost();
+```
+
+This registers `<avatar-host>` in a browser; the current element displays “avatar coming soon.” The exported visitor capability types describe a planned integration contract. The sandboxed visitor iframe, capability bridge, and server-side key helper are not implemented yet. This package is licensed under Apache-2.0.

@@ -67,8 +67,10 @@ const PROVIDER_ENV: Record<AiProvider, string> = {
   openai: "OPENAI_API_KEY",
   anthropic: "ANTHROPIC_API_KEY",
   openai_compatible: "OPENAI_API_KEY",
-  mock: "OPENAI_API_KEY",
+  mock: "",
 };
+
+export const DEFAULT_HOSTED_GATEWAY_URL = "https://shubur-gateway.vercel.app";
 
 function isLoopback(hostname: string): boolean {
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
@@ -282,9 +284,9 @@ export async function runInit(opts: InitOptions = {}, cwd = process.cwd()): Prom
 
   const mode = opts.mode ?? (await ask("Gateway mode? (self_hosted / hosted)", currentConfig?.mode ?? "self_hosted")) as GatewayMode;
   if (mode !== "self_hosted" && mode !== "hosted") throw new Error("Gateway mode must be self_hosted or hosted.");
-  const gatewayDefault = mode === "self_hosted" ? "http://localhost:4100" : "";
-  const gatewayAnswer = opts.gatewayUrl ?? await ask(mode === "hosted" ? "HTTPS Shubur Cloud or gateway URL" : "Local gateway URL", currentConfig?.gatewayUrl ?? gatewayDefault);
-  if (!gatewayAnswer) throw new Error("Hosted mode needs an HTTPS gateway URL. Shubur Cloud is coming soon.");
+  const gatewayDefault = mode === "self_hosted" ? "http://localhost:4100" : DEFAULT_HOSTED_GATEWAY_URL;
+  const gatewayAnswer = opts.gatewayUrl ?? await ask(mode === "hosted" ? "HTTPS gateway URL" : "Local gateway URL", currentConfig?.gatewayUrl ?? gatewayDefault);
+  if (!gatewayAnswer) throw new Error(`Hosted mode needs an HTTPS gateway URL. Use ${DEFAULT_HOSTED_GATEWAY_URL} or provide --gateway-url.`);
   const gatewayUrl = validateGatewayUrl(gatewayAnswer, mode);
   const tenantApiKey = opts.tenantApiKey ?? currentConfig?.tenantApiKey ?? (mode === "hosted" ? await ask("Tenant API key", "") : undefined);
   if (mode === "hosted" && !tenantApiKey) throw new Error("Hosted mode requires a tenant API key.");
@@ -303,10 +305,12 @@ export async function runInit(opts: InitOptions = {}, cwd = process.cwd()): Prom
   const siteOriginAnswer = opts.siteOrigin ?? await ask("Site origin", suggestedOrigin);
   if (mode === "hosted" && !siteOriginAnswer) throw new Error("Hosted mode requires a non-loopback HTTPS site origin using a DNS hostname.");
   const siteOrigin = validateSiteOrigin(siteOriginAnswer, mode);
-  const aiProvider = opts.aiProvider ?? (await ask("AI provider (openai / anthropic / openai_compatible)", currentConfig?.aiProvider ?? "openai")) as AiProvider;
-  if (!(["openai", "anthropic", "openai_compatible"] as string[]).includes(aiProvider)) throw new Error("Unsupported AI provider.");
-  const aiProviderEnvVar = opts.aiProviderEnvVar ?? await ask("API key environment variable", currentConfig?.aiProviderEnvVar ?? PROVIDER_ENV[aiProvider]);
-  if (!/^[A-Z_][A-Z0-9_]*$/.test(aiProviderEnvVar)) throw new Error("Environment variable name is invalid.");
+  const aiProvider = opts.aiProvider ?? (await ask("AI provider (openai / anthropic / openai_compatible / mock)", currentConfig?.aiProvider ?? "openai")) as AiProvider;
+  if (!(["openai", "anthropic", "openai_compatible", "mock"] as string[]).includes(aiProvider)) throw new Error("Unsupported AI provider.");
+  const aiProviderEnvVar = aiProvider === "mock"
+    ? ""
+    : opts.aiProviderEnvVar ?? await ask("API key environment variable", currentConfig?.aiProviderEnvVar ?? PROVIDER_ENV[aiProvider]);
+  if (aiProviderEnvVar && !/^[A-Z_][A-Z0-9_]*$/.test(aiProviderEnvVar)) throw new Error("Environment variable name is invalid.");
   rl?.close();
 
   const hasAnySiteIdentityPart = Boolean(currentConfig?.siteDid || currentConfig?.sitePrivateKeyPem || currentConfig?.sitePublicKeyPem);
@@ -343,7 +347,7 @@ export async function runInit(opts: InitOptions = {}, cwd = process.cwd()): Prom
     networkScopes: [...new Set(networkScopes)],
     avatarName: chosenName,
     aiProvider,
-    aiProviderEnvVar,
+    ...(aiProviderEnvVar ? { aiProviderEnvVar } : {}),
     shuburHandle: currentConfig?.shuburHandle ?? `${slug(chosenName)}@${handleHost}`,
     backendUrl: backendPath,
     siteOrigin,
@@ -373,13 +377,24 @@ export async function runInit(opts: InitOptions = {}, cwd = process.cwd()): Prom
     await chmod(join(configDir, "profile.json"), 0o600);
     filesWritten.push(".avatar-gateway/profile.json");
   }
-  if (await writeIfAbsent(cwd, ".env.example", `${aiProviderEnvVar}=\n${aiProvider === "openai_compatible" ? "OPENAI_BASE_URL=http://localhost:11434/v1\nOPENAI_MODEL=llama3\n" : ""}`)) filesWritten.push(".env.example");
+  const envExample = aiProviderEnvVar
+    ? `${aiProviderEnvVar}=\n${aiProvider === "openai_compatible" ? "OPENAI_BASE_URL=http://localhost:11434/v1\nOPENAI_MODEL=llama3\n" : ""}`
+    : "# Mock provider does not require an API key.\n";
+  if (await writeIfAbsent(cwd, ".env.example", envExample)) filesWritten.push(".env.example");
   if (await ensureGitignore(cwd)) filesWritten.push(".gitignore");
 
   let packagesInstalled = false;
   if (opts.installPackages !== false) {
     if (await ensurePackageManifest(cwd)) filesWritten.push("package.json");
-    await (opts.installer ?? runNpmInstall)(scaffold.packages, cwd);
+    try {
+      await (opts.installer ?? runNpmInstall)(scaffold.packages, cwd);
+    } catch (error) {
+      throw new Error(
+        `Package installation failed. These packages must be published to npm before setup can install them. ` +
+        `After publishing, retry: npm install ${scaffold.packages.join(" ")}. ` +
+        `Original error: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
     packagesInstalled = true;
     if (detectedFramework === "plain-html" && await writeDevScript(cwd) && !filesWritten.includes("package.json")) {
       filesWritten.push("package.json");
@@ -394,8 +409,9 @@ export async function runInit(opts: InitOptions = {}, cwd = process.cwd()): Prom
     process.stdout.write("\nShubur setup is ready.\n\n");
     process.stdout.write(`  Framework: ${detectedFramework}\n  Avatar: ${chosenName}\n  Site DID: ${siteIdentity.did}\n  Shubur profile: ${profilePublished ? "registered" : "saved locally as a profile draft"}\n`);
     if (!profilePublished) process.stdout.write("  Gateway: start it with `npm run shubur:gateway`, then register the profile with Shubur.\n");
-    process.stdout.write(`  Provider key: set ${aiProviderEnvVar} in your environment; it is not written to the project.\n`);
-    if (!packagesInstalled) process.stdout.write(`  Install packages: npm install ${scaffold.packages.join(" ")}\n`);
+    if (aiProviderEnvVar) process.stdout.write(`  Provider key: set ${aiProviderEnvVar} in your environment; it is not written to the project.\n`);
+    else process.stdout.write("  Provider: mock (no API key required).\n");
+    if (!packagesInstalled) process.stdout.write(`  Install packages after they are published to npm: npm install ${scaffold.packages.join(" ")}\n`);
     process.stdout.write("\nNext: open the generated apartment page and set your provider key before enabling owner chat.\n\n");
   }
 
@@ -413,12 +429,17 @@ export async function runInit(opts: InitOptions = {}, cwd = process.cwd()): Prom
 }
 
 export function formatInitSummary(result: InitResult): string {
+  const packagesToInstall = buildScaffold(result.framework, result.avatarName, "/avatar-gateway").packages;
   return [
     `Shubur setup ready for ${result.avatarName} (${result.framework}).`,
     `Site DID: ${result.siteDid}`,
     `Avatar DID: ${result.avatarDid}`,
     `Gateway: ${result.gatewayUrl} (${result.mode})`,
     `Packages installed: ${result.packagesInstalled ? "yes" : "no"}`,
+    ...(!result.packagesInstalled ? [
+      "Packages must be published to npm before installation.",
+      `After publication, run: npm install ${packagesToInstall.join(" ")}`,
+    ] : []),
     `Profile: ${result.profilePublished ? "registered with gateway" : "saved locally as .avatar-gateway/profile.json"}`,
     result.framework === "plain-html" ? "Next: run npm run dev to open the generated Starter Apartment." : "Next: open the generated Shubur apartment page.",
   ].join("\n");

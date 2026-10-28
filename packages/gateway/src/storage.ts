@@ -1,6 +1,6 @@
-import Database from "better-sqlite3";
 import { randomUUID, createHash } from "node:crypto";
 import type { Scope } from "./policy.js";
+import { createSqlJsDatabase, type StorageDatabase } from "./sqlite.js";
 
 export interface SiteRecord {
   siteDid: string;
@@ -208,15 +208,27 @@ export const DEFAULT_TENANT_QUOTAS: Record<TenantPlan, TenantQuotas> = {
 };
 
 export class GatewayStorage {
-  private readonly db: Database.Database;
+  private readonly db: StorageDatabase;
   private auditChainHead = "0000000000000000000000000000000000000000000000000000000000000000";
 
   constructor(path = ":memory:") {
-    this.db = new Database(path);
+    this.db = createSqlJsDatabase(path);
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("foreign_keys = ON");
     this.migrate();
+    this.db.flush();
   }
+
+  snapshot(): Uint8Array { return this.db.serialize(); }
+
+  restoreSnapshot(snapshot: Uint8Array): void {
+    this.db.restore(snapshot);
+    this.db.pragma("foreign_keys = ON");
+    this.auditChainHead = "0000000000000000000000000000000000000000000000000000000000000000";
+    this.migrate();
+  }
+
+  flush(): void { this.db.flush(); }
 
   private migrate(): void {
     this.db.exec(`
@@ -607,10 +619,9 @@ export class GatewayStorage {
   }
 
   listRevocations(since?: string): RevocationRecord[] {
-    const query = since
-      ? this.db.prepare<[string], Record<string, unknown>>("SELECT * FROM revocations WHERE effective_at >= ? ORDER BY effective_at DESC")
-      : this.db.prepare<[], Record<string, unknown>>("SELECT * FROM revocations ORDER BY effective_at DESC");
-    const rows = (since ? (query as Database.Statement<[string]>).all(since) : (query as Database.Statement<[]>).all()) as Record<string, unknown>[];
+    const rows = since
+      ? this.db.prepare<[string], Record<string, unknown>>("SELECT * FROM revocations WHERE effective_at >= ? ORDER BY effective_at DESC").all(since)
+      : this.db.prepare<[], Record<string, unknown>>("SELECT * FROM revocations ORDER BY effective_at DESC").all();
     return rows.map((r) => ({
       revocationId: r.revocation_id as string,
       targetType: r.target_type as RevocationRecord["targetType"],

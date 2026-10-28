@@ -14,6 +14,12 @@ await mkdir(assets, { recursive: true });
 await build({
   input: join(root, "site", "src", "portfolio-world", "living-home.js"),
   platform: "browser",
+  resolve: {
+    alias: {
+      "@avatar-gateway/starter-apartment": join(root, "packages", "starter-apartment", "dist", "index.js"),
+      "@shubur/life": join(root, "packages", "life", "dist", "index.js"),
+    },
+  },
   logLevel: "warn",
   output: { file: join(assets, "portfolio-world.js"), format: "esm", minify: false },
 });

@@ -50,12 +50,16 @@ export function buildScaffold(
 ): ScaffoldFiles {
   const common = {
     packages: [
-      "@avatar-gateway/sdk",
-      "@avatar-gateway/starter-apartment",
-      "@avatar-gateway/gateway",
-      "@avatar-gateway/avatar-runtime",
-      "@avatar-gateway/shubur",
-      "@shubur/life",
+      "shubur@^0.2.0",
+      "@avatar-gateway/sdk@^0.2.0",
+      "@avatar-gateway/sdk-web@^0.2.0",
+      "@avatar-gateway/starter-apartment@^0.2.0",
+      "@avatar-gateway/gateway@^0.2.0",
+      "@avatar-gateway/avatar-runtime@^0.2.0",
+      "@avatar-gateway/marketplace@^0.2.0",
+      "@avatar-gateway/plugin-api@^0.2.0",
+      "@avatar-gateway/shubur@^0.2.0",
+      "@shubur/life@^0.2.0",
     ],
     instructions: [
       `Set your provider key in the environment (see .env.example).`,
@@ -63,9 +67,9 @@ export function buildScaffold(
       `Open the generated Shubur apartment page and follow its setup notes.`,
     ],
   };
-  const packages = framework === "plain-html" ? [...common.packages, "vite"] : common.packages;
+  const packages = framework === "plain-html" ? [...common.packages, "vite@^6.0.0"] : common.packages;
 
-  const quickstart = `# Shubur quick setup\n\nHave you ever wondered what your agent would be doing if it had a life of its own?\n\nThis project includes a generic Starter Apartment, an emergent needs-driven home routine, a local avatar identity, and a Shubur profile draft. The private keys are stored in .avatar-gateway/config.json.\n\nSet the provider key in your shell (for example, OPENAI_API_KEY) before starting your app. The key is read from the environment and is not written to project files.\n\nUse \`npx shubur@latest life status\` to inspect local activity, needs, mood, and skills. The life view uses no LLM or network request.\n\nSelf-hosted gateway: run npm run shubur:gateway. Shubur Cloud is coming soon; a configured HTTPS gateway can be selected with the CLI.\n`;
+  const quickstart = `# Shubur quick setup\n\nHave you ever wondered what your agent would be doing if it had a life of its own?\n\nThis project includes a generic Starter Apartment, an emergent needs-driven home routine, a local avatar identity, and a Shubur profile draft. The private keys are stored in .avatar-gateway/config.json.\n\nSet the provider key in your shell (for example, OPENAI_API_KEY) before starting your app. The key is read from the environment and is not written to project files.\n\nUse \`npx shubur@latest life status\` to inspect local activity, needs, mood, and skills. The life view uses no LLM or network request.\n\nSelf-hosted gateway: run npm run shubur:gateway. Hosted REST gateway: select \`--mode hosted\`; the default URL is https://shubur-gateway.vercel.app and registration needs an operator-issued tenant key. Chat relay WebSockets require a self-hosted gateway.\n`;
 
   switch (framework) {
     case "nextjs":

@@ -74,7 +74,7 @@ function registerTools(server: McpServer, cwd: string): void {
     tenant_api_key: z.string().min(1).optional(),
     site_origin: z.string().url().optional(),
     avatar_name: z.string().trim().min(1).max(100).optional(),
-    ai_provider: z.enum(["openai", "anthropic", "openai_compatible"]).optional(),
+    ai_provider: z.enum(["openai", "anthropic", "openai_compatible", "mock"]).optional(),
     ai_provider_env_var: z.string().regex(/^[A-Z_][A-Z0-9_]*$/).optional(),
   }, async (args) => toolInit({
     mode: args.mode,
@@ -201,7 +201,7 @@ function registerTools(server: McpServer, cwd: string): void {
     return toolCustomiseApartment(config, cwd);
   });
 
-  registerTextTool(server, "shubur_owner_chat", "Talk to the avatar privately through the local owner channel. The BYO provider key is read from the named environment variable and is never sent to avatar-gateway.", {
+  registerTextTool(server, "shubur_owner_chat", "Talk to the avatar privately through the local owner channel. BYO provider keys are read from the named environment variable and are never sent to avatar-gateway; the mock provider needs no key.", {
     message: z.string().trim().min(1).max(20_000),
   }, async (args) => toolOwnerChat(args.message, cwd));
 

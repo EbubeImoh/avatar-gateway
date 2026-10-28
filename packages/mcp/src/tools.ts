@@ -6,7 +6,7 @@
 import { randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { AvatarRuntime, OpenAICompatibleProvider, OpenAIProvider, AnthropicProvider } from "@avatar-gateway/avatar-runtime";
+import { AvatarRuntime, OpenAICompatibleProvider, OpenAIProvider, AnthropicProvider, MockProvider } from "@avatar-gateway/avatar-runtime";
 import type { LLMProvider } from "@avatar-gateway/avatar-runtime";
 import { generateIdentity, signGatewayRequest } from "@avatar-gateway/gateway";
 import { resolveConfig } from "@avatar-gateway/starter-apartment";
@@ -68,7 +68,7 @@ export async function toolStatus(cwd: string): Promise<string> {
     config.siteDid ? `Site DID: ${config.siteDid}` : "Site: not registered",
     config.avatarDid ? `Avatar: ${config.avatarName ?? "unnamed"} (${config.avatarDid})` : "Avatar: not registered",
     config.shuburHandle ? `Shubur handle: ${config.shuburHandle}` : "Shubur profile: not created",
-    config.aiProvider ? `AI provider: ${config.aiProvider} (key from ${config.aiProviderEnvVar ?? "env"})` : "AI provider: not configured",
+    config.aiProvider === "mock" ? "AI provider: mock (no API key required)" : config.aiProvider ? `AI provider: ${config.aiProvider} (key from ${config.aiProviderEnvVar ?? "env"})` : "AI provider: not configured",
   ];
 
   // Try to ping the gateway
@@ -570,6 +570,7 @@ async function saveOwnerMessages(cwd: string, messages: OwnerChannelMessage[]): 
 
 function makeOwnerProvider(config: AvatarGatewayConfig, provider?: LLMProvider): LLMProvider {
   if (provider) return provider;
+  if (config.aiProvider === "mock") return new MockProvider();
   const apiKey = process.env[config.aiProviderEnvVar ?? "OPENAI_API_KEY"];
   if (config.aiProvider === "anthropic") return new AnthropicProvider({ apiKey });
   if (config.aiProvider === "openai_compatible") {

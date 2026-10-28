@@ -5,7 +5,8 @@ export * from "./policy.js";
 export * from "./tokens.js";
 export * from "./relay.js";
 export * from "./storage.js";
-export * from "./server.js";
+export * from "./blob-storage.js";
+export * from "./gateway-server.js";
 
 /** The gateway never proxies, meters or resells LLM tokens. */
 export const GATEWAY_HANDLES_LLM_TRAFFIC = false;

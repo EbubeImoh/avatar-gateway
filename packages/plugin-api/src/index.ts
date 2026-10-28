@@ -1,6 +1,4 @@
-/**
- * @avatar-gateway/plugin-api — placeholder entry point. See SPEC.md §5.8.
- */
+/** Public contract types and helpers for Avatar Gateway plugins. */
 
 export type PluginKind = "ui" | "behaviour";
 

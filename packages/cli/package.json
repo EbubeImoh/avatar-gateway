@@ -19,5 +19,21 @@
     "@avatar-gateway/gateway": "^0.2.0",
     "@avatar-gateway/marketplace": "^0.2.0",
     "@shubur/life": "^0.2.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
   }
 }

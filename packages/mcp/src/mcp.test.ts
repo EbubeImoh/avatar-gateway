@@ -124,6 +124,11 @@ describe("toolInit", () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
+  it("defaults MCP hosted setup to the deployed gateway URL", async () => {
+    await toolInit({ mode: "hosted", tenantApiKey: "ag_test_key_for_hosted_default", siteOrigin: "https://example.com" }, tmpDir, { installPackages: false, connectGateway: false });
+    expect((await readConfig(tmpDir))?.gatewayUrl).toBe("https://shubur-gateway.vercel.app");
+  });
+
   it("applies updates over existing config and rejects insecure hosted URLs", async () => {
     await writeConfig({ gatewayUrl: "http://localhost:4100", mode: "self_hosted", avatarName: "Old" }, tmpDir);
     await toolInit({ mode: "hosted", gatewayUrl: "https://gateway.example.test", tenantApiKey: "test-key", siteOrigin: "https://example.test", avatarName: "New" }, tmpDir, { installPackages: false, connectGateway: false });
@@ -229,6 +234,12 @@ describe("local apartment and owner-channel tools", () => {
     expect(await toolReadOwnerChannel(tmpDir, 1)).toContain("mock reply");
   });
 
+  it("uses MockProvider from an init-selected mock configuration", async () => {
+    await toolInit({ avatarName: "Mock Bot", aiProvider: "mock" }, tmpDir, { installPackages: false, connectGateway: false });
+    expect(await toolOwnerChat("Hello without credentials", tmpDir)).toContain("mock reply");
+    expect(await toolStatus(tmpDir)).toContain("mock (no API key required)");
+  });
+
   it("does not call an owner provider before local config exists", async () => {
     const provider = new MockProvider();
     const complete = vi.spyOn(provider, "complete");
@@ -266,9 +277,11 @@ describe("Shubur MCP Streamable HTTP transport", () => {
         body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }),
       });
       expect(listed.status).toBe(200);
-      const result = await listed.json() as { result: { tools: Array<{ name: string }> } };
+      const result = await listed.json() as { result: { tools: Array<{ name: string; inputSchema?: unknown }> } };
       const names = result.result.tools.map((tool) => tool.name);
       expect(names).toContain("shubur_init");
+      const initTool = result.result.tools.find((tool) => tool.name === "shubur_init");
+      expect(JSON.stringify(initTool?.inputSchema)).toContain('"mock"');
       expect(names).toContain("shubur_life_status");
       expect(names).toContain("shubur_read_dms");
       expect(names).toContain("shubur_read_owner_channel");

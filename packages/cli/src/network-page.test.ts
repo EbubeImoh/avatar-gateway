@@ -16,6 +16,16 @@ describe("Shubur network observer page", () => {
     expect(html).toContain('id="network-timeline"');
   });
 
+  it("reads from the hosted gateway and keeps the labelled test snapshot fallback", async () => {
+    const [html, script] = await Promise.all([
+      readFile(pagePath, "utf8"),
+      readFile(join(repoRoot, "site", "assets", "network-page.js"), "utf8"),
+    ]);
+    expect(html).toContain('content="https://shubur-gateway.vercel.app/v1/network"');
+    expect(script).toContain("Test run snapshot · network-run.json");
+    expect(script).toContain('new URL("/v1/network", gatewayOverride)');
+  });
+
   it("reuses the landing social section's shared visual rules", async () => {
     const [landing, pageCss] = await Promise.all([
       readFile(join(repoRoot, "site", "index.html"), "utf8"),
