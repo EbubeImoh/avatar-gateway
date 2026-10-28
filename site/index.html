@@ -6,6 +6,7 @@
     <meta name="theme-color" content="#f7f5ed" />
     <meta name="description" content="Shubur is building an open world for AI agents, starting with a configurable apartment and an open-source gateway for avatar visits." />
     <title>Shubur — A life of its own for your agent</title>
+    <link rel="stylesheet" href="assets/portfolio-world.css" />
     <style>
       :root {
         color-scheme: light;
@@ -60,12 +61,7 @@
       .status { display: inline-flex; align-items: center; gap: 6px; color: #477021; font-size: 11px; }
       .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #8cc442; }
       .home-mount { min-width: 0; }
-      .home-poster { display: block; width: 100%; height: auto; aspect-ratio: 640 / 390; border: 2px solid var(--ink); border-radius: 18px; background: #39464a; }
-      .hero .home-poster { margin-bottom: 44px; }
-      .home-mount .ag-apartment { max-width: none; }
-      .home-mount .ag-apartment__stage { box-shadow: none; }
-      .home-mount .ag-apartment__caption { margin-top: 10px; font-size: 12px; }
-      .hero .home-mount .ag-apartment__rooms { display: none; }
+      .hero .portfolio-world-stage { margin-bottom: 44px; }
       .home-mood { margin: 8px 2px 0; color: var(--muted); font-size: 12px; font-weight: 650; }
       .home-toggle { min-height: 44px; padding: 6px 14px; border: 1.5px solid var(--ink); border-radius: 999px; background: var(--green); color: var(--ink); font: inherit; font-size: 12px; font-weight: 800; cursor: pointer; }
       .home-toggle[data-active="true"] { background: var(--lavender); }
@@ -285,11 +281,9 @@
         <div class="hero-art">
           <div class="orbit" aria-hidden="true"></div>
           <span class="star one" aria-hidden="true">✳</span><span class="star two" aria-hidden="true">✦</span><span class="star three" aria-hidden="true">✳</span>
-          <figure class="home-card" data-home-card aria-label="A time-lapse of an agent's day in its Starter Apartment">
+          <figure class="home-card" data-home-card aria-label="A time-lapse of an agent's day in a 3D home">
             <figcaption class="home-card-top"><span>A day at home</span><span class="status" data-home-badge>at home</span></figcaption>
-            <div class="home-mount" data-living-home="hero">
-              <img class="home-poster" src="assets/apartment-poster.svg" width="640" height="390" alt="A brick-style avatar working at the desk in the Starter Apartment studio." />
-            </div>
+            <div class="home-mount" data-portfolio-world="hero"></div>
             <p class="home-mood" data-home-mood hidden></p>
           </figure>
         </div>
@@ -423,7 +417,7 @@
           <div>
             <p class="eyebrow">Starter Apartment</p>
             <h2 id="apartment-title" style="margin-bottom:17px;font-size:clamp(38px,5vw,57px);line-height:1.02;letter-spacing:-.065em">Give your agent a home of its own.</h2>
-            <p style="color:var(--muted);font-size:17px">Drop in a generic seven-room apartment with a brick-style avatar that lives its own day there. Customize the avatar, room layout, furniture and props, colors, lighting, and schedule. Use the React component or plain DOM mount, with an <code>Avatar.mount</code> integration hook. The apartment here is the real package, driven by the Layer 1 life engine in your timezone. Pick a room to look around.</p>
+            <p style="color:var(--muted);font-size:17px">Drop in a generic seven-room apartment with a brick-style avatar that lives its own day there. Customize the avatar, room layout, furniture and props, colors, lighting, and schedule. Use the React component or plain DOM mount, with an <code>Avatar.mount</code> integration hook. This scene uses the portfolio's seven-room CSS-3D house, with Shubur Life driving the avatar's activity in your timezone.</p>
             <ul class="social-list" style="margin-top:24px">
               <li><span class="check">✓</span><span>Typed <code>ApartmentConfig</code> — override anything, defaults just work</span></li>
               <li><span class="check">✓</span><span>Day-cycle activities tied to your local timezone</span></li>
@@ -434,9 +428,7 @@
           </div>
           <div class="home-card" data-home-card>
             <div class="home-card-top"><span class="status" data-home-badge>Starter Apartment</span><button class="home-toggle" type="button" data-home-toggle hidden>Play the day</button></div>
-            <div class="home-mount" data-living-home="section">
-              <img class="home-poster" src="assets/apartment-poster.svg" width="640" height="390" loading="lazy" alt="A brick-style avatar working at the desk in the Starter Apartment studio." />
-            </div>
+            <div class="home-mount" data-portfolio-world="section"></div>
             <p class="home-mood" data-home-mood hidden></p>
             <details class="dev-snippet">
               <summary>For developers: embed it</summary>
@@ -565,20 +557,26 @@ GATEWAY_PORT=4100 node packages/gateway/dist/serve.js</code></pre>
       });
     </script>
     <script type="module">
-      // Load the live apartment only when it nears the viewport; Save-Data visitors keep the static poster.
-      const homes = document.querySelectorAll("[data-living-home]");
-      const saveData = navigator.connection?.saveData === true;
-      if (homes.length && !saveData && "IntersectionObserver" in window) {
-        let living;
+      // Load the readable CSS-3D world only as each mount approaches the viewport.
+      const homes = [...document.querySelectorAll("[data-portfolio-world]")];
+      let world;
+      const start = (home) => {
+        world ??= import("./assets/portfolio-world.js");
+        world.then(({ startPortfolioWorld }) => startPortfolioWorld(home)).catch(() => {
+          home.textContent = "The 3D home could not be loaded.";
+        });
+      };
+      if ("IntersectionObserver" in window) {
         const observer = new IntersectionObserver((entries) => {
           for (const entry of entries) {
             if (!entry.isIntersecting) continue;
             observer.unobserve(entry.target);
-            living ??= import("./assets/living-home.js");
-            living.then(({ startLivingHome }) => startLivingHome(entry.target)).catch((error) => console.warn("Live apartment unavailable; keeping the poster.", error));
+            start(entry.target);
           }
         }, { rootMargin: "200px 0px" });
         homes.forEach((home) => observer.observe(home));
+      } else {
+        homes.forEach(start);
       }
     </script>
   </body>
