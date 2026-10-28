@@ -197,6 +197,16 @@ describe("local apartment and owner-channel tools", () => {
     expect(configStat.mode & 0o777).toBe(0o600);
   });
 
+  it("drives life status from the customised apartment's name and layout", async () => {
+    await writeConfig({ gatewayUrl: "http://localhost:4100", mode: "self_hosted", avatarDid: "did:key:loft-agent", lifeStartedAt: "2026-10-27T09:00:00.000Z" }, tmpDir);
+    await toolCustomiseApartment({
+      name: "Garden Flat",
+      layout: { startRoom: "living", rooms: [{ id: "living", name: "Living room", furniture: ["sofa", "bookshelf"] }] },
+    }, tmpDir);
+    const out = await toolLifeStatus(tmpDir);
+    expect(out).toContain("Place: Garden Flat · living");
+  });
+
   it("leaves malformed saved apartment configuration untouched", async () => {
     const configPath = join(tmpDir, ".avatar-gateway/apartment.config.json");
     await import("node:fs/promises").then(({ mkdir }) => mkdir(join(tmpDir, ".avatar-gateway"), { recursive: true }));

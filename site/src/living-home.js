@@ -7,11 +7,13 @@
 
 import { mount } from "@avatar-gateway/starter-apartment";
 import { createLifeSimulation } from "@shubur/life";
+import { SAMPLE_HOMES, SAMPLE_SEED } from "./sample-homes.mjs";
 
 const HOUR_MS = 60 * 60 * 1000;
 // One simulated day in about 72 seconds.
 const TIME_LAPSE_SPEED = 1200;
-const LIFE_SEED = "shubur";
+// The live scene draws the full sample apartment; the agent's day comes from that same layout.
+const HOME = SAMPLE_HOMES[0].config;
 
 const MODES = {
   hero: { speed: TIME_LAPSE_SPEED, refreshMs: 1000 },
@@ -41,10 +43,11 @@ function mountHome(target, { speed, refreshMs, onStatus }) {
   const clock = createClock(speed);
   // Replay the previous day so the routine bar is already filled in on first paint.
   const startedAt = new Date(Math.floor(clock().getTime() / HOUR_MS) * HOUR_MS - 24 * HOUR_MS);
-  const life = createLifeSimulation({ agentId: "shubur-site-demo", seed: LIFE_SEED, startedAt, timeZone, clock });
+  const apartment = { ...HOME, dayCycle: { timezone: timeZone } };
+  const life = createLifeSimulation({ agentId: "shubur-site-demo", seed: SAMPLE_SEED, apartment, startedAt, timeZone, clock });
   return mount(
     target,
-    { avatar: { name: "Your agent", accessories: ["headphones"] }, dayCycle: { timezone: timeZone } },
+    apartment,
     life,
     {
       clock,

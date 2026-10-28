@@ -17,6 +17,7 @@ import type { ApartmentConfig, DayActivity, DayActivitySource, DayPeriod, RoomId
 
 export { APARTMENT_STYLES, resolveConfig, buildSceneSvg, currentActivity, dayPeriod, localHour, activityCssClass } from "./scene.js";
 export {
+  DEFAULT_PLACE_NAME,
   DEFAULT_AVATAR_LOOK,
   DEFAULT_ROOM_THEME,
   DEFAULT_FURNITURE,

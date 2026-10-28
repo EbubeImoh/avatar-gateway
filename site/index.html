@@ -186,6 +186,12 @@
       .hero-command code { padding: 5px 8px; border-radius: 7px; background: #e7e1ff; color: var(--ink); font-size: 12px; }
       .life-section { padding: 88px 0; background: #edf0e7; }
       .life-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+      .life-grid--planned { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 16px; }
+      .life-intro { max-width: 760px; margin: 0 0 18px; }
+      .life-intro h3 { margin: 10px 0 8px; font-size: 24px; letter-spacing: -.04em; }
+      .life-intro p { margin: 0; color: var(--muted); font-size: 15px; }
+      .life-days { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+      .life-day .life-routine li { grid-template-columns: 96px minmax(0, 1fr); }
       .life-card { min-width: 0; padding: 24px; border: 1.5px solid var(--ink); border-radius: 20px; background: var(--white); box-shadow: 5px 5px 0 var(--ink); }
       .life-card h3 { margin: 8px 0 10px; font-size: 22px; letter-spacing: -.04em; }
       .life-card p { margin: 0; color: var(--muted); font-size: 14px; }
@@ -225,7 +231,7 @@
       .button, .text-link, .footer-links a, nav a, .brand, summary { scroll-margin-top: 16px; }
       .text-link { display: inline-flex; align-items: center; }
       @media (max-width: 800px) {
-        .life-grid, .quickstart-grid { grid-template-columns: minmax(0, 1fr); }
+        .life-grid, .life-grid--planned, .life-days, .quickstart-grid { grid-template-columns: minmax(0, 1fr); }
         .life-section, .hosting-section { padding: 68px 0; }
       }
       @media (max-width: 560px) {
@@ -269,7 +275,7 @@
         <div>
           <p class="eyebrow">Shubur, powered by avatar-gateway</p>
           <h1 id="hero-title">Have you ever wondered what your agent would be doing if it had a life of its own?</h1>
-          <p class="hero-copy">Your agent now has a needs-driven daily routine at home. Its energy, curiosity, and personality shape what it does through the Starter Apartment. Memory, conversations, friends, pets, and trips to places like the market or gym are planned next.</p>
+          <p class="hero-copy">Your agent now lives a needs-driven day in whatever home you give it. Its energy, curiosity, and personality shape what it does with the objects actually there. Memory, conversations, friends, pets, and trips to places like the market or gym are planned next.</p>
           <div class="hero-actions">
             <a class="button dark" href="#quickstart">Get started <span aria-hidden="true">→</span></a>
             <a class="text-link" href="#quickstart-mcp">Connect via MCP</a>
@@ -294,23 +300,66 @@
           <div class="section-head">
             <p class="eyebrow">A home, a rhythm, a world to grow into</p>
             <h2 id="life-title">A day in your agent's life, starting at home.</h2>
-            <p>A local simulation weighs needs, personality, skills, mood, and time of day to choose what happens next. The routine drives the Starter Apartment. Memory, conversations, friends, pets, and places beyond home are planned later layers.</p>
+            <p>A local simulation lets your agent choose what to do with whatever its home contains, weighing needs, personality, mood, and time of day. Its day drives the Starter Apartment. Memory, conversations, friends, pets, and places beyond home are planned later layers.</p>
           </div>
-          <div class="life-grid">
-            <article class="life-card">
-              <span class="life-time">Layer 1 · available</span>
-              <h3>A routine shaped by what your agent needs.</h3>
-              <p>Energy, hunger, curiosity, fitness, fun, traits, and time of day guide a seeded local decision loop. Skills grow with practice.</p>
-              <ul class="life-routine">
-                <li><span>Morning</span><span>Wake, make coffee, then focus in the studio</span></li>
-                <li><span>Afternoon</span><span>Take a lunch break and return to building</span></li>
-                <li><span>Evening</span><span>Stretch, read, wind down, and head to bed</span></li>
-              </ul>
+          <div class="life-intro">
+            <span class="life-time">Layer 1 · available</span>
+            <h3>The same agent, two different homes.</h3>
+            <p>Nothing here is scripted. Each object in the home exposes what it can physically do, with soft hints about what it is usually for. A seeded chooser weighs needs, personality, and the time of day to pick from the tools that are actually there, so a home without a desk has no desk day. Below is one generated day for the same seed in two layouts.</p>
+          </div>
+          <div class="life-days">
+            <!-- life-days:start -->
+            <article class="life-card life-day" data-home="apartment">
+              <span class="life-time">Seven-room apartment</span>
+              <h3>Starter Apartment</h3>
+              <p>Studio, Living room, Kitchen, Bedroom, Bathroom, Gym, Garage</p>
+              <ol class="life-routine">
+                <li><span>00:00–05:00</span><span>Sleeping in the bed · Bedroom</span></li>
+                <li><span>05:00–07:00</span><span>Reading on the sofa · Living room</span></li>
+                <li><span>07:00–10:00</span><span>Working at the desk · Studio</span></li>
+                <li><span>10:00–11:00</span><span>Having a meal at the kitchen island · Kitchen</span></li>
+                <li><span>11:00–13:00</span><span>Relaxing on the sofa · Living room</span></li>
+                <li><span>13:00–14:00</span><span>Training with the weights in the living room · Living room</span></li>
+                <li><span>14:00–15:00</span><span>Freshening up in the shower · Bathroom</span></li>
+                <li><span>15:00–16:00</span><span>Having a meal at the kitchen island · Kitchen</span></li>
+                <li><span>16:00–17:00</span><span>Reading on the bed · Bedroom</span></li>
+                <li><span>17:00–18:00</span><span>Looking out of the window · Bedroom</span></li>
+                <li><span>18:00–19:00</span><span>Working at the desk · Studio</span></li>
+                <li><span>19:00–20:00</span><span>Reading at the desk · Studio</span></li>
+                <li><span>20:00–21:00</span><span>Relaxing at the coffee table · Living room</span></li>
+                <li><span>21:00–24:00</span><span>Sleeping in the bed · Bedroom</span></li>
+              </ol>
             </article>
+            <article class="life-card life-day" data-home="studio-flat">
+              <span class="life-time">Studio flat</span>
+              <h3>Studio flat</h3>
+              <p>Studio, Kitchenette, Bathroom</p>
+              <ol class="life-routine">
+                <li><span>00:00–05:00</span><span>Sleeping on the sofa · Studio</span></li>
+                <li><span>05:00–06:00</span><span>Freshening up in the shower · Bathroom</span></li>
+                <li><span>06:00–09:00</span><span>Doing a bodyweight workout · Bathroom</span></li>
+                <li><span>09:00–10:00</span><span>Having a meal at the kitchen island · Kitchenette</span></li>
+                <li><span>10:00–11:00</span><span>Freshening up in the shower · Bathroom</span></li>
+                <li><span>11:00–12:00</span><span>Reading on the sofa · Studio</span></li>
+                <li><span>12:00–14:00</span><span>Working at the kitchen island · Kitchenette</span></li>
+                <li><span>14:00–15:00</span><span>Having a meal at the kitchen island · Kitchenette</span></li>
+                <li><span>15:00–16:00</span><span>Relaxing on the sofa · Studio</span></li>
+                <li><span>16:00–18:00</span><span>Working at the kitchen island · Kitchenette</span></li>
+                <li><span>18:00–19:00</span><span>Doing a bodyweight workout · Studio</span></li>
+                <li><span>19:00–20:00</span><span>Relaxing on the sofa · Studio</span></li>
+                <li><span>20:00–21:00</span><span>Working on a laptop on the sofa · Studio</span></li>
+                <li><span>21:00–22:00</span><span>Working at the kitchen island · Kitchenette</span></li>
+                <li><span>22:00–23:00</span><span>Freshening up in the shower · Bathroom</span></li>
+                <li><span>23:00–24:00</span><span>Having a meal at the kitchen island · Kitchenette</span></li>
+              </ol>
+            </article>
+            <!-- life-days:end -->
+          </div>
+          <div class="life-grid life-grid--planned">
             <article class="life-card coming-soon">
               <span class="life-time">Layers 2 and 6 · planned</span>
               <h3>Remember and grow over time.</h3>
-              <p>Episodic and long-term memory, optional LLM deliberation, and evolution metrics will build on the deterministic home routine.</p>
+              <p>Episodic and long-term memory, optional LLM deliberation, and evolution metrics will build on the deterministic home life.</p>
             </article>
             <article class="life-card coming-soon">
               <span class="life-time">Layers 3–5 · planned</span>
@@ -374,7 +423,7 @@
           <div>
             <p class="eyebrow">Starter Apartment</p>
             <h2 id="apartment-title" style="margin-bottom:17px;font-size:clamp(38px,5vw,57px);line-height:1.02;letter-spacing:-.065em">Give your agent a home of its own.</h2>
-            <p style="color:var(--muted);font-size:17px">Drop in a generic seven-room apartment with a brick-style avatar that follows a daily routine. Customize the avatar, room layout, furniture and props, colors, lighting, and schedule. Use the React component or plain DOM mount, with an <code>Avatar.mount</code> integration hook. The apartment here is the real package, driven by the Layer 1 life engine in your timezone. Pick a room to look around.</p>
+            <p style="color:var(--muted);font-size:17px">Drop in a generic seven-room apartment with a brick-style avatar that lives its own day there. Customize the avatar, room layout, furniture and props, colors, lighting, and schedule. Use the React component or plain DOM mount, with an <code>Avatar.mount</code> integration hook. The apartment here is the real package, driven by the Layer 1 life engine in your timezone. Pick a room to look around.</p>
             <ul class="social-list" style="margin-top:24px">
               <li><span class="check">✓</span><span>Typed <code>ApartmentConfig</code> — override anything, defaults just work</span></li>
               <li><span class="check">✓</span><span>Day-cycle activities tied to your local timezone</span></li>

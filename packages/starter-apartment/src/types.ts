@@ -112,6 +112,8 @@ export interface GatewayMount {
 }
 
 export interface ApartmentConfig {
+  /** Display name for this home, such as "Ada's Loft". Defaults to "Starter Apartment". */
+  name?: string;
   avatar?: Partial<AvatarLook>;
   room?: Partial<RoomTheme>;
   furniture?: Partial<FurnitureConfig>;
@@ -124,6 +126,7 @@ export interface ApartmentConfig {
 }
 
 export interface ResolvedApartmentConfig {
+  name: string;
   avatar: AvatarLook;
   room: RoomTheme;
   furniture: FurnitureConfig;
@@ -134,6 +137,8 @@ export interface ResolvedApartmentConfig {
   gateway?: GatewayMount;
   assetCredits?: string;
 }
+
+export const DEFAULT_PLACE_NAME = "Starter Apartment";
 
 export const DEFAULT_AVATAR_LOOK: AvatarLook = {
   skinTone: "#d99b63",

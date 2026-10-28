@@ -1,52 +1,46 @@
-/** Deterministic, local-first agent needs, mood, skills, and home routine. */
+/**
+ * Deterministic, local-first agent life at home. The home is the owner's own
+ * ApartmentConfig; every action is a tool its objects expose; a pluggable
+ * chooser decides what to do. Nothing here prescribes a routine.
+ */
 
-import type { AvatarActivity, DayActivity, DayActivitySource, RoomId } from "@avatar-gateway/starter-apartment";
+import type { ApartmentConfig, DayActivity, DayActivitySource } from "@avatar-gateway/starter-apartment";
+import { UtilityChooser } from "./chooser.js";
+import type { LifeChoiceContext, LifeChooser } from "./chooser.js";
+import { buildEnvironment, initialObjectStates } from "./environment.js";
+import type { LifeEnvironment } from "./environment.js";
+import { SeededRandom } from "./random.js";
+import { applyToolToWorld, availableTools } from "./tools.js";
+import type { LifeTool, WorldState } from "./tools.js";
+import { NEED_NAMES, SKILL_NAMES, TRAIT_NAMES, clampLevel } from "./types.js";
+import type { AgentLifeState, LifeActivity, LifeMood, NeedState, SkillState, TraitState } from "./types.js";
 
-export type NeedName = "energy" | "hunger" | "social" | "fitness" | "curiosity" | "money" | "fun";
-export type NeedState = Record<NeedName, number>;
-
-export type TraitName = "conscientiousness" | "curiosity" | "playfulness" | "resilience" | "sociability";
-export type TraitState = Record<TraitName, number>;
-
-export type SkillName = "building" | "cooking" | "fitness" | "reading" | "selfCare";
-export type SkillState = Record<SkillName, number>;
-
-export type LifeActivityId = "sleep" | "wake" | "coffee" | "work" | "meal" | "stretch" | "read" | "relax";
-export type MoodLabel = "content" | "curious" | "focused" | "hungry" | "lonely" | "restless" | "tired";
-
-export interface LifeMood {
-  label: MoodLabel;
-  reason: string;
-}
-
-export interface LifeActivity extends DayActivity {
-  id: LifeActivityId;
-  startedAt: string;
-  utility: number;
-}
-
-export interface AgentLifeState {
-  version: 1;
-  agentId: string;
-  place: { id: "home"; name: "Starter Apartment" };
-  needs: NeedState;
-  traits: TraitState;
-  skills: SkillState;
-  mood: LifeMood;
-  currentActivity: LifeActivity;
-  startedAt: string;
-  lastUpdatedAt: string;
-  simulatedHours: number;
-}
+export { createSeededRandom } from "./random.js";
+export { OBJECT_CATALOG, buildEnvironment, initialObjectStates } from "./environment.js";
+export type { LifeEnvironment, LifeObject, LifeObjectState, LifeRoom, ObjectFeature, ObjectPhysics, ObjectSize, SoftHint } from "./environment.js";
+export { applyToolToWorld, availableTools, isDark } from "./tools.js";
+export type { LifeTool, ToolContext, ToolParams, ToolVerb, WorldState } from "./tools.js";
+export { UtilityChooser, urgentNeeds, utilityOf } from "./chooser.js";
+export type { LifeChoice, LifeChoiceContext, LifeChooser } from "./chooser.js";
+export type {
+  AgentLifeState, LifeActivity, LifeActivityId, LifeMood, MoodLabel, NeedChanges, NeedName, NeedState,
+  SkillName, SkillState, TraitName, TraitState,
+} from "./types.js";
 
 export interface LifeSimulationOptions {
   /** Stable local agent identifier. It is not included in the formatted status view. */
   agentId: string;
-  /** Seed for repeatable starting traits, needs, and utility tie-breaks. */
+  /** Seed for repeatable starting traits, needs, and choices. */
   seed: string | number;
+  /** The owner's home. Defaults to the Starter Apartment. Rooms and objects come only from here. */
+  apartment?: ApartmentConfig;
+  /** Decides which available tool to use. Defaults to the seeded UtilityChooser. */
+  chooser?: LifeChooser;
+  /** Other occupants per object id, for shared homes. A full object cannot be used. */
+  occupancy?: Record<string, number>;
   /** Defaults to the injected clock's current time. */
   startedAt?: Date;
-  /** A local IANA timezone used for daily schedule utility. */
+  /** A local IANA timezone for daylight and the body's sleep rhythm. */
   timeZone?: string;
   /** Defaults to the system clock. */
   clock?: () => Date;
@@ -61,62 +55,9 @@ export interface LifeProjectionOptions extends LifeSimulationOptions {
 const HOUR_MS = 60 * 60 * 1000;
 const MAX_REPLAY_HOURS = 24 * 365 * 10;
 const DEFAULT_TIME_ZONE = "Africa/Lagos";
-const NEED_NAMES: NeedName[] = ["energy", "hunger", "social", "fitness", "curiosity", "money", "fun"];
-const TRAIT_NAMES: TraitName[] = ["conscientiousness", "curiosity", "playfulness", "resilience", "sociability"];
-const SKILL_NAMES: SkillName[] = ["building", "cooking", "fitness", "reading", "selfCare"];
-
-type NeedChanges = Partial<Record<NeedName, number>>;
-
-interface HomeAction {
-  id: LifeActivityId;
-  activity: AvatarActivity;
-  caption: string;
-  room: RoomId;
-  changes: NeedChanges;
-  skill?: SkillName;
-  skillGain?: number;
-  scheduleBonus(hour: number): number;
-  traitBonus(traits: TraitState): number;
-}
-
-function hashSeed(seed: string | number): number {
-  if (typeof seed === "number") {
-    if (!Number.isFinite(seed)) throw new Error("Life seed must be a finite number or non-empty string.");
-    const value = Math.trunc(seed) >>> 0;
-    return value === 0 ? 0x6d2b79f5 : value;
-  }
-  if (!seed.trim() || seed.length > 1_000) throw new Error("Life seed must be a finite number or non-empty string.");
-  let hash = 0x811c9dc5;
-  for (let index = 0; index < seed.length; index += 1) {
-    hash = Math.imul(hash ^ seed.charCodeAt(index), 0x01000193) >>> 0;
-  }
-  return hash === 0 ? 0x6d2b79f5 : hash;
-}
-
-class SeededRandom {
-  private state: number;
-
-  constructor(seed: string | number) {
-    this.state = hashSeed(seed);
-  }
-
-  next(): number {
-    let value = (this.state += 0x6d2b79f5) >>> 0;
-    value = Math.imul(value ^ (value >>> 15), value | 1);
-    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
-    return ((value ^ (value >>> 14)) >>> 0) / 4_294_967_296;
-  }
-
-  clone(): SeededRandom {
-    return new SeededRandom(this.state);
-  }
-}
-
-/** Create a repeatable random source without relying on global Math.random. */
-export function createSeededRandom(seed: string | number): () => number {
-  const random = new SeededRandom(seed);
-  return () => random.next();
-}
+/** Short actions, such as flipping switches, allowed before settling into an hour. */
+const MAX_PREPARATIONS = 3;
+const MAX_PLANNED_HOURS = 12;
 
 function assertLevel(value: number, label: string): number {
   if (!Number.isFinite(value) || value < 0 || value > 100) throw new Error(`${label} must be a number from 0 to 100.`);
@@ -132,6 +73,7 @@ function copyNeeds(input: Partial<NeedState> | undefined, random: SeededRandom):
     curiosity: 30 + Math.round(random.next() * 20),
     money: 30 + Math.round(random.next() * 20),
     fun: 30 + Math.round(random.next() * 20),
+    hygiene: 25 + Math.round(random.next() * 20),
   };
   const result = { ...defaults, ...input };
   for (const key of NEED_NAMES) result[key] = assertLevel(result[key], `needs.${key}`);
@@ -157,26 +99,45 @@ function copySkills(input?: SkillState): SkillState {
   return result;
 }
 
+function copyOccupancy(input: Record<string, number> | undefined): Record<string, number> {
+  const result: Record<string, number> = {};
+  for (const [id, count] of Object.entries(input ?? {})) {
+    if (!Number.isInteger(count) || count < 0) throw new Error(`occupancy.${id} must be a whole number of occupants.`);
+    result[id] = count;
+  }
+  return result;
+}
+
 function validDate(value: Date, label: string): Date {
   const time = value.getTime();
   if (!Number.isFinite(time)) throw new Error(`${label} must be a valid date.`);
   return new Date(time);
 }
 
-function localParts(now: Date, timeZone: string): { year: string; month: string; day: string; hour: number } {
-  let parts: Intl.DateTimeFormatPart[];
-  try {
-    parts = new Intl.DateTimeFormat("en-CA", {
-      timeZone,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      hourCycle: "h23",
-    }).formatToParts(now);
-  } catch {
-    throw new Error("timeZone must be a valid IANA timezone.");
+const formatters = new Map<string, Intl.DateTimeFormat>();
+
+function formatterFor(timeZone: string): Intl.DateTimeFormat {
+  let formatter = formatters.get(timeZone);
+  if (!formatter) {
+    try {
+      formatter = new Intl.DateTimeFormat("en-CA", {
+        timeZone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        hourCycle: "h23",
+      });
+    } catch {
+      throw new Error("timeZone must be a valid IANA timezone.");
+    }
+    formatters.set(timeZone, formatter);
   }
+  return formatter;
+}
+
+function localParts(now: Date, timeZone: string): { year: string; month: string; day: string; hour: number } {
+  const parts = formatterFor(timeZone).formatToParts(now);
   const value = (type: Intl.DateTimeFormatPartTypes): string => parts.find((part) => part.type === type)?.value ?? "";
   return { year: value("year"), month: value("month"), day: value("day"), hour: Number(value("hour")) };
 }
@@ -191,116 +152,32 @@ function localDateKey(now: Date, timeZone: string): string {
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
-function clamp(value: number): number {
-  return Math.max(0, Math.min(100, value));
-}
-
-const HOME_ACTIONS: HomeAction[] = [
-  {
-    id: "sleep", activity: "sleeping", caption: "Getting some rest", room: "bedroom",
-    changes: { energy: -29, fun: -2, hunger: 4 }, skill: "selfCare", skillGain: 1.4,
-    scheduleBonus: (hour) => hour >= 22 || hour < 6 ? 8 : 0,
-    traitBonus: (traits) => traits.resilience * 0.025,
-  },
-  {
-    id: "wake", activity: "waking", caption: "Waking up slowly", room: "bedroom",
-    changes: { energy: -3, fun: -1 }, skill: "selfCare", skillGain: 0.5,
-    scheduleBonus: (hour) => hour >= 6 && hour < 8 ? 7 : 0,
-    traitBonus: (traits) => traits.conscientiousness * 0.018,
-  },
-  {
-    id: "coffee", activity: "coffee", caption: "Making a cup of coffee", room: "kitchen",
-    changes: { energy: -8, fun: -4, hunger: 2 }, skill: "cooking", skillGain: 1.1,
-    scheduleBonus: (hour) => hour >= 7 && hour < 10 ? 5 : 0,
-    traitBonus: (traits) => traits.playfulness * 0.018,
-  },
-  {
-    id: "work", activity: "working", caption: "Working on a personal project", room: "studio",
-    changes: { money: -16, curiosity: -4, energy: 5, hunger: 4, fun: 1 }, skill: "building", skillGain: 1.8,
-    scheduleBonus: (hour) => hour >= 9 && hour < 17 ? 7 : 0,
-    traitBonus: (traits) => traits.conscientiousness * 0.035 + traits.curiosity * 0.012,
-  },
-  {
-    id: "meal", activity: "idle", caption: "Taking a meal break", room: "kitchen",
-    changes: { hunger: -30, fun: -2, energy: -1 }, skill: "cooking", skillGain: 0.8,
-    scheduleBonus: (hour) => hour >= 11 && hour < 14 ? 5 : 0,
-    traitBonus: (traits) => traits.conscientiousness * 0.01,
-  },
-  {
-    id: "stretch", activity: "stretching", caption: "Stretching at home", room: "gym",
-    changes: { fitness: -28, fun: -2, energy: 4 }, skill: "fitness", skillGain: 1.8,
-    scheduleBonus: (hour) => hour >= 17 && hour < 20 ? 5 : 0,
-    traitBonus: (traits) => traits.conscientiousness * 0.02 + traits.playfulness * 0.008,
-  },
-  {
-    id: "read", activity: "reading", caption: "Reading for a while", room: "living",
-    changes: { curiosity: -24, fun: -7, energy: 2 }, skill: "reading", skillGain: 1.8,
-    scheduleBonus: (hour) => hour >= 18 && hour < 22 ? 5 : 0,
-    traitBonus: (traits) => traits.curiosity * 0.04,
-  },
-  {
-    id: "relax", activity: "idle", caption: "Winding down at home", room: "living",
-    changes: { fun: -25, energy: -5 }, skill: "selfCare", skillGain: 1,
-    scheduleBonus: (hour) => hour >= 20 || hour < 6 ? 3 : 0,
-    traitBonus: (traits) => traits.playfulness * 0.025 + traits.resilience * 0.01,
-  },
-];
-
-function utility(action: HomeAction, state: AgentLifeState, hour: number, random: SeededRandom): number {
-  const needRelief = NEED_NAMES.reduce((total, name) => {
-    const relief = Math.max(0, -(action.changes[name] ?? 0));
-    return total + state.needs[name] * (relief / 100) * 0.34;
-  }, 0);
-  return 2 + needRelief + action.scheduleBonus(hour) + action.traitBonus(state.traits) + random.next() * 0.05;
-}
-
-function chooseAction(state: AgentLifeState, now: Date, timeZone: string, random: SeededRandom): { action: HomeAction; score: number } {
-  const hour = localHour(now, timeZone);
-  let chosen = HOME_ACTIONS[0]!;
-  let best = Number.NEGATIVE_INFINITY;
-  for (const action of HOME_ACTIONS) {
-    const score = utility(action, state, hour, random);
-    if (score > best) {
-      chosen = action;
-      best = score;
-    }
-  }
-  return { action: chosen, score: best };
-}
-
-function makeActivity(action: HomeAction, now: Date, utilityScore: number, timeZone: string): LifeActivity {
-  const hour = localHour(now, timeZone);
-  return {
-    id: action.id,
-    activity: action.activity,
-    caption: action.caption,
-    room: action.room,
-    startHour: hour,
-    endHour: Math.min(24, hour + 1),
-    startedAt: now.toISOString(),
-    utility: Math.round(utilityScore * 1_000) / 1_000,
-  };
-}
-
 function deriveMood(state: AgentLifeState): LifeMood {
   if (state.needs.energy >= 76) return { label: "tired", reason: "rest is the most pressing need" };
   if (state.needs.hunger >= 76) return { label: "hungry", reason: "a meal would help" };
   if (state.needs.social >= 76 && state.traits.sociability >= 45) return { label: "lonely", reason: "this home has no social activities yet" };
   if (state.needs.curiosity >= 72) return { label: "curious", reason: "there is more to explore" };
   if (state.needs.fun >= 72) return { label: "restless", reason: "a change of pace would help" };
-  if (state.currentActivity.id === "work") return { label: "focused", reason: "working on a personal project" };
+  if (state.currentActivity.id === "work" || state.currentActivity.id === "tinker") return { label: "focused", reason: state.currentActivity.caption.toLowerCase() };
   return { label: "content", reason: "needs are in balance for now" };
 }
 
+function cloneActivity(activity: LifeActivity): LifeActivity {
+  return { ...activity, params: { ...activity.params }, effects: { ...activity.effects }, preparations: [...activity.preparations] };
+}
+
 function cloneState(state: AgentLifeState): AgentLifeState {
+  const objects: AgentLifeState["objects"] = {};
+  for (const [id, object] of Object.entries(state.objects)) objects[id] = { ...object };
   return {
     ...state,
     place: { ...state.place },
+    objects,
     needs: { ...state.needs },
     traits: { ...state.traits },
     skills: { ...state.skills },
     mood: { ...state.mood },
-    currentActivity: { ...state.currentActivity },
+    currentActivity: cloneActivity(state.currentActivity),
   };
 }
 
@@ -308,74 +185,174 @@ function activitySlot(activity: DayActivity, startHour: number, endHour: number)
   return { ...activity, startHour, endHour };
 }
 
-function transition(state: AgentLifeState, now: Date, timeZone: string, random: SeededRandom): void {
-  const elapsed = HOME_ACTIONS.find((action) => action.id === state.currentActivity.id);
-  const sleeping = elapsed?.id === "sleep";
-  state.needs.energy = clamp(state.needs.energy + (sleeping ? -12 : 7 - state.traits.resilience * 0.035));
-  state.needs.hunger = clamp(state.needs.hunger + (sleeping ? 5 : 7));
-  state.needs.social = clamp(state.needs.social + 2 + state.traits.sociability * 0.025);
-  state.needs.fitness = clamp(state.needs.fitness + 1.5);
-  state.needs.curiosity = clamp(state.needs.curiosity + 1.5);
-  state.needs.money = clamp(state.needs.money + 2);
-  state.needs.fun = clamp(state.needs.fun + (sleeping ? 1 : 3));
+/** Body physics for one hour: needs rise over time, faster awake, and sleep pressure builds at night. */
+function driftNeeds(state: AgentLifeState, hour: number): void {
+  const asleep = state.currentActivity.id === "sleep";
+  const night = hour >= 22 || hour < 6;
+  const needs = state.needs;
+  needs.energy = clampLevel(needs.energy + (asleep ? 0 : (night ? 9 : 5.5) - state.traits.resilience * 0.02));
+  needs.hunger = clampLevel(needs.hunger + (asleep ? 1.5 : 4));
+  needs.hygiene = clampLevel(needs.hygiene + (asleep ? 1 : 2));
+  needs.social = clampLevel(needs.social + 2 + state.traits.sociability * 0.025);
+  needs.fitness = clampLevel(needs.fitness + 1.5);
+  needs.curiosity = clampLevel(needs.curiosity + 1.5);
+  needs.money = clampLevel(needs.money + 2);
+  needs.fun = clampLevel(needs.fun + (asleep ? 1 : 3));
+}
 
-  if (elapsed) {
-    for (const name of NEED_NAMES) state.needs[name] = clamp(state.needs[name] + (elapsed.changes[name] ?? 0));
-    if (elapsed.skill && elapsed.skillGain) {
-      const gain = elapsed.skillGain * (0.8 + state.traits.conscientiousness / 250);
-      state.skills[elapsed.skill] = clamp(state.skills[elapsed.skill] + gain);
+interface Engine {
+  environment: LifeEnvironment;
+  chooser: LifeChooser;
+  occupancy: Record<string, number>;
+  timeZone: string;
+}
+
+/**
+ * Offer the physically available tools to the chooser until it settles on an
+ * hour-long one. Choices outside the offered tools fall back to a bare action.
+ */
+function decide(state: AgentLifeState, now: Date, engine: Engine, random: SeededRandom): LifeActivity {
+  const hour = localHour(now, engine.timeZone);
+  let world: WorldState = { location: state.location, objects: state.objects };
+  const toolsFor = (at: WorldState): LifeTool[] => availableTools({ environment: engine.environment, world: at, hour, occupancy: engine.occupancy });
+  const preparations: string[] = [];
+  let minutesLeft = 60;
+  for (;;) {
+    const all = toolsFor(world);
+    const canPrepare = preparations.length < MAX_PREPARATIONS;
+    const tools = all.filter((tool) => tool.minutes >= 60 || (canPrepare && tool.minutes < minutesLeft));
+    const context: LifeChoiceContext = {
+      now: new Date(now.getTime()),
+      hour,
+      needs: { ...state.needs },
+      traits: { ...state.traits },
+      skills: { ...state.skills },
+      mood: { ...state.mood },
+      current: cloneActivity(state.currentActivity),
+      location: world.location,
+      environment: engine.environment,
+      tools,
+      minutesLeft,
+      random: () => random.next(),
+      preview: (tool) => toolsFor(applyToolToWorld(tool, world)),
+    };
+    const choice = engine.chooser.choose(context);
+    const tool = tools.find((item) => item.id === choice.toolId)
+      ?? tools.find((item) => item.verb === "idle" && !item.objectId && item.room === world.location)!;
+    world = applyToolToWorld(tool, world);
+    if (tool.minutes < 60) {
+      minutesLeft -= tool.minutes;
+      preparations.push(tool.caption);
+      continue;
     }
-  }
 
-  const next = chooseAction(state, now, timeZone, random);
-  state.currentActivity = makeActivity(next.action, now, next.score, timeZone);
+    state.location = world.location;
+    state.objects = world.objects;
+    const previous = state.currentActivity;
+    const continuing = previous.toolId !== "" && previous.id === tool.verb && previous.objectId === tool.objectId
+      && previous.room === tool.room && previous.elapsedHours < previous.plannedHours;
+    const requested = Number.isFinite(choice.hours) ? Math.trunc(choice.hours!) : 1;
+    const score = Number.isFinite(choice.score) ? choice.score! : 0;
+    return {
+      id: tool.verb,
+      toolId: tool.id,
+      ...(tool.objectId ? { objectId: tool.objectId } : {}),
+      params: { ...tool.params },
+      hinted: tool.hinted,
+      effects: { ...tool.effects },
+      ...(tool.skill ? { skill: tool.skill } : {}),
+      preparations,
+      plannedHours: continuing ? previous.plannedHours : Math.max(1, Math.min(MAX_PLANNED_HOURS, requested)),
+      elapsedHours: continuing ? previous.elapsedHours : 0,
+      activity: tool.activity,
+      caption: tool.caption,
+      room: tool.room,
+      startHour: hour,
+      endHour: Math.min(24, hour + 1),
+      startedAt: now.toISOString(),
+      utility: Math.round(score * 1_000) / 1_000,
+    };
+  }
+}
+
+function transition(state: AgentLifeState, now: Date, engine: Engine, random: SeededRandom): void {
+  const elapsed = state.currentActivity;
+  driftNeeds(state, localHour(new Date(now.getTime() - HOUR_MS), engine.timeZone));
+  for (const name of NEED_NAMES) state.needs[name] = clampLevel(state.needs[name] + (elapsed.effects[name] ?? 0));
+  if (elapsed.skill) {
+    const gain = 1.5 * (0.8 + state.traits.conscientiousness / 250);
+    state.skills[elapsed.skill] = clampLevel(state.skills[elapsed.skill] + gain);
+  }
+  elapsed.elapsedHours += 1;
+
+  state.currentActivity = decide(state, now, engine, random);
   state.lastUpdatedAt = now.toISOString();
   state.simulatedHours += 1;
   state.mood = deriveMood(state);
 }
 
 /**
- * Stateful, seeded life simulation. It only has a home in this layer; travel,
- * chat, and social activities are intentionally left for later layers.
+ * Stateful, seeded life simulation in the owner's home. Travel, chat, and
+ * social activities are intentionally left for later layers.
  */
 export class LifeSimulation implements DayActivitySource {
   private readonly clock: () => Date;
-  private readonly timeZone: string;
   private readonly random: SeededRandom;
+  private readonly engine: Engine;
   private state: AgentLifeState;
   private dayKey: string;
   private readonly dayActivities = new Map<number, DayActivity>();
+  private forecast?: { dateKey: string; activities: Map<number, DayActivity> };
 
   constructor(options: LifeSimulationOptions) {
     if (!options.agentId.trim() || options.agentId.length > 255) throw new Error("agentId must contain 1–255 characters.");
+    if (options.chooser !== undefined && typeof options.chooser?.choose !== "function") throw new Error("chooser must provide a choose() function.");
     this.clock = options.clock ?? (() => new Date());
-    this.timeZone = options.timeZone ?? DEFAULT_TIME_ZONE;
+    const environment = buildEnvironment(options.apartment);
+    this.engine = {
+      environment,
+      chooser: options.chooser ?? new UtilityChooser(),
+      occupancy: copyOccupancy(options.occupancy),
+      timeZone: options.timeZone ?? DEFAULT_TIME_ZONE,
+    };
     this.random = new SeededRandom(options.seed);
     const startedAt = validDate(options.startedAt ?? this.clock(), "startedAt");
     const needs = copyNeeds(options.initialNeeds, this.random);
     const traits = copyTraits(options.traits, this.random);
     const state: AgentLifeState = {
-      version: 1,
+      version: 2,
       agentId: options.agentId,
-      place: { id: "home", name: "Starter Apartment" },
+      place: { id: "home", name: environment.placeName },
+      location: environment.startRoom,
+      objects: initialObjectStates(environment),
       needs,
       traits,
       skills: copySkills(),
       mood: { label: "content", reason: "needs are in balance for now" },
       currentActivity: {
-        id: "relax", activity: "idle", caption: "Winding down at home", room: "living",
+        id: "idle", toolId: "", params: {}, hinted: false, effects: {}, preparations: [], plannedHours: 0, elapsedHours: 0,
+        activity: "idle", caption: "Arriving home", room: environment.startRoom,
         startHour: 0, endHour: 1, startedAt: startedAt.toISOString(), utility: 0,
       },
       startedAt: startedAt.toISOString(),
       lastUpdatedAt: startedAt.toISOString(),
       simulatedHours: 0,
     };
-    const first = chooseAction(state, startedAt, this.timeZone, this.random);
-    state.currentActivity = makeActivity(first.action, startedAt, first.score, this.timeZone);
+    state.currentActivity = decide(state, startedAt, this.engine, this.random);
     state.mood = deriveMood(state);
     this.state = state;
-    this.dayKey = localDateKey(startedAt, this.timeZone);
+    this.dayKey = localDateKey(startedAt, this.engine.timeZone);
     this.recordActivity(state.currentActivity);
+  }
+
+  /** The home this agent lives in, as derived from its apartment config. */
+  getEnvironment(): LifeEnvironment {
+    const environment = this.engine.environment;
+    return {
+      ...environment,
+      rooms: environment.rooms.map((room) => ({ ...room })),
+      objects: environment.objects.map((object) => ({ ...object, features: { ...object.features }, hints: object.hints.map((hint) => ({ ...hint })) })),
+    };
   }
 
   /** Return a defensive copy of the current state. Mutating it never changes the simulation. */
@@ -392,7 +369,7 @@ export class LifeSimulation implements DayActivitySource {
     if (hoursToAdvance > MAX_REPLAY_HOURS) throw new Error("Life projection is more than 10 years behind; rerun Shubur init to reset its local start time.");
     for (let step = 0; step < hoursToAdvance; step += 1) {
       const next = new Date(new Date(this.state.lastUpdatedAt).getTime() + HOUR_MS);
-      transition(this.state, next, this.timeZone, this.random);
+      transition(this.state, next, this.engine, this.random);
       this.recordActivity(this.state.currentActivity);
     }
     return this.getSnapshot();
@@ -405,20 +382,25 @@ export class LifeSimulation implements DayActivitySource {
   getDayActivities(now: Date = this.clock()): DayActivity[] {
     const at = validDate(now, "activity time");
     this.advanceTo(at);
-    const dateKey = localDateKey(at, this.timeZone);
-    const activities = new Map<number, DayActivity>(this.dayActivities);
-    const forecastState = cloneState(this.state);
-    const forecastRandom = this.random.clone();
-    let forecastAt = new Date(forecastState.lastUpdatedAt);
-    for (let step = 0; step < 26; step += 1) {
-      forecastAt = new Date(forecastAt.getTime() + HOUR_MS);
-      if (localDateKey(forecastAt, this.timeZone) !== dateKey) break;
-      transition(forecastState, forecastAt, this.timeZone, forecastRandom);
-      const hour = localHour(forecastAt, this.timeZone);
-      activities.set(hour, forecastState.currentActivity);
+    const timeZone = this.engine.timeZone;
+    const dateKey = localDateKey(at, timeZone);
+    // The simulation is deterministic, so a forecast made earlier today stays valid as real time catches up.
+    if (this.forecast?.dateKey !== dateKey) {
+      const forecast = new Map<number, DayActivity>();
+      const forecastState = cloneState(this.state);
+      const forecastRandom = this.random.clone();
+      let forecastAt = new Date(forecastState.lastUpdatedAt);
+      for (let step = 0; step < 26; step += 1) {
+        forecastAt = new Date(forecastAt.getTime() + HOUR_MS);
+        if (localDateKey(forecastAt, timeZone) !== dateKey) break;
+        transition(forecastState, forecastAt, this.engine, forecastRandom);
+        forecast.set(localHour(forecastAt, timeZone), dayActivity(forecastState.currentActivity));
+      }
+      this.forecast = { dateKey, activities: forecast };
     }
+    const activities = new Map<number, DayActivity>([...this.forecast.activities, ...this.dayActivities]);
 
-    const currentHour = localHour(at, this.timeZone);
+    const currentHour = localHour(at, timeZone);
     const hourly: DayActivity[] = [];
     for (let hour = 0; hour < 24; hour += 1) {
       hourly.push(activities.get(hour) ?? {
@@ -426,7 +408,7 @@ export class LifeSimulation implements DayActivitySource {
         endHour: hour + 1,
         activity: "idle",
         caption: hour < currentHour ? "Life starts later today" : "A quiet moment at home",
-        room: "living",
+        room: this.engine.environment.startRoom,
       });
     }
 
@@ -444,19 +426,24 @@ export class LifeSimulation implements DayActivitySource {
 
   private recordActivity(activity: LifeActivity): void {
     const now = new Date(activity.startedAt);
-    const dateKey = localDateKey(now, this.timeZone);
+    const dateKey = localDateKey(now, this.engine.timeZone);
     if (dateKey !== this.dayKey) {
       this.dayKey = dateKey;
       this.dayActivities.clear();
     }
-    this.dayActivities.set(localHour(now, this.timeZone), {
-      startHour: activity.startHour,
-      endHour: activity.endHour,
-      activity: activity.activity,
-      caption: activity.caption,
-      room: activity.room,
-    });
+    this.dayActivities.set(localHour(now, this.engine.timeZone), dayActivity(activity));
   }
+}
+
+/** The scene-facing slice of an activity: a backwards-compatible pose, caption, and room. */
+function dayActivity(activity: LifeActivity): DayActivity {
+  return {
+    startHour: activity.startHour,
+    endHour: activity.endHour,
+    activity: activity.activity,
+    caption: activity.caption,
+    room: activity.room,
+  };
 }
 
 export function createLifeSimulation(options: LifeSimulationOptions): LifeSimulation {

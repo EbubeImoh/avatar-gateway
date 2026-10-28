@@ -33,6 +33,13 @@ describe("resolveConfig", () => {
     expect(cfg.dayCycle.activities.length).toBeGreaterThan(0);
   });
 
+  it("names the home from config, defaulting to the Starter Apartment", () => {
+    expect(resolveConfig({}).name).toBe("Starter Apartment");
+    expect(resolveConfig({ name: "  Ada's Loft " }).name).toBe("Ada's Loft");
+    expect(() => resolveConfig({ name: "" })).toThrow("name must contain");
+    expect(() => resolveConfig({ name: "x".repeat(61) })).toThrow("name must contain");
+  });
+
   it("merges partial avatar overrides without touching other fields", () => {
     const cfg = resolveConfig({ avatar: { name: "Test Bot", outfitColor: "#ff0000" } });
     expect(cfg.avatar.name).toBe("Test Bot");

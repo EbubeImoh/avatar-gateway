@@ -40,6 +40,26 @@ describe("readLifeStatus", () => {
     expect(await readFile(configPath, "utf8")).toBe(original);
   });
 
+  it("lives in the owner's saved apartment layout and uses its place name", async () => {
+    await import("node:fs/promises").then(({ mkdir }) => mkdir(join(cwd, ".avatar-gateway"), { recursive: true }));
+    await writeFile(join(cwd, ".avatar-gateway", "config.json"), JSON.stringify({ avatarDid: "did:key:flat-agent", lifeStartedAt: "2026-10-27T09:00:00.000Z" }));
+    const apartmentPath = join(cwd, ".avatar-gateway", "apartment.config.json");
+    const apartment = JSON.stringify({
+      name: "Ada's Loft",
+      layout: { startRoom: "studio", rooms: [{ id: "studio", name: "Loft", furniture: ["sofa", "window"] }, { id: "kitchen", name: "Kitchen", furniture: ["island"] }] },
+    });
+    await writeFile(apartmentPath, apartment);
+
+    const status = await readLifeStatus(cwd, now);
+    expect(status).toContain("Place: Ada's Loft · ");
+    expect(status).toMatch(/Place: Ada's Loft · (studio|kitchen)\n/);
+    expect(status).not.toContain("Starter Apartment");
+    expect(await readFile(apartmentPath, "utf8")).toBe(apartment);
+
+    await writeFile(apartmentPath, "[1]");
+    await expect(readLifeStatus(cwd, now)).rejects.toThrow("apartment config must contain a JSON object");
+  });
+
   it("does not invent an agent when config has no avatar identity", async () => {
     await import("node:fs/promises").then(({ mkdir }) => mkdir(join(cwd, ".avatar-gateway"), { recursive: true }));
     await writeFile(join(cwd, ".avatar-gateway", "config.json"), JSON.stringify({ mode: "self_hosted" }));

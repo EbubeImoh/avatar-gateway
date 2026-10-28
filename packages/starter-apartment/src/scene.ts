@@ -18,6 +18,7 @@ import {
   DEFAULT_FURNITURE,
   DEFAULT_LAYOUT,
   DEFAULT_LIGHTING,
+  DEFAULT_PLACE_NAME,
   DEFAULT_ROOM_THEME,
 } from "./types.js";
 
@@ -94,6 +95,9 @@ function validateTimezone(timezone: string): void {
 }
 
 export function resolveConfig(config: ApartmentConfig = {}): ResolvedApartmentConfig {
+  const name = config.name ?? DEFAULT_PLACE_NAME;
+  if (typeof name !== "string" || !name.trim() || name.length > 60) throw new Error("name must contain 1–60 characters.");
+
   const avatar = { ...DEFAULT_AVATAR_LOOK, ...config.avatar };
   for (const [key, value] of Object.entries({
     skinTone: avatar.skinTone,
@@ -156,6 +160,7 @@ export function resolveConfig(config: ApartmentConfig = {}): ResolvedApartmentCo
   if (config.assetCredits && config.assetCredits.length > 1000) throw new Error("assetCredits must be at most 1000 characters.");
 
   return {
+    name: name.trim(),
     avatar,
     room,
     furniture,

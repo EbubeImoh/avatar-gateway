@@ -390,7 +390,7 @@ export async function toolCustomiseApartment(
 ): Promise<string> {
   if (typeof input !== "object" || input === null || Array.isArray(input)) throw new Error("Apartment customization must be an ApartmentConfig object.");
   const updates = input as ApartmentConfig;
-  const allowedKeys = new Set(["avatar", "room", "furniture", "layout", "props", "lighting", "dayCycle", "gateway", "assetCredits"]);
+  const allowedKeys = new Set(["name", "avatar", "room", "furniture", "layout", "props", "lighting", "dayCycle", "gateway", "assetCredits"]);
   if (Object.keys(input).some((key) => !allowedKeys.has(key))) throw new Error("ApartmentConfig contains an unsupported top-level field.");
   const configPath = join(cwd, ".avatar-gateway", "apartment.config.json");
   let current: ApartmentConfig = {};
